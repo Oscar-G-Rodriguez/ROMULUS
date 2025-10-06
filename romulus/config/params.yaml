@@ -1,0 +1,56 @@
+# Global knobs used by multiple modules.
+paths:
+  raw_daily: data/raw/daily
+  raw_weekly: data/raw/weekly
+  raw_macro: data/raw/macro
+  interim: data/interim
+  features: data/features
+  labels: data/labels
+  preds: data/preds
+  meta: data/meta
+  portfolio: data/portfolio
+  reports: data/reports
+  leaderboard: data/leaderboard.parquet
+
+calendar:
+  timezone: UTC
+  market: NYSE
+  week_end_day: Friday
+
+liquidity:
+  min_dollar_vol_lookback_days: 60
+  min_dollar_vol_usd: 10000000
+
+costs:
+  roundtrip_bps: 15
+
+portfolio:
+  per_name_cap: 0.03          # absolute cap on |weight|
+  turnover_cap: 0.20          # per rebalance sum(|w_t - w_{t-1}|)
+  beta_target: 0.0            # target beta to market (0 = market-neutral)
+
+training:
+  train_window_months: [24, 36]
+  horizon_days: [5, 10]       # label horizons used in daily panels
+  embargo_days: 3             # purged CV gap
+  seed: 42
+
+xgboost:
+  tree_method: gpu_hist
+  predictor: gpu_predictor
+  gpu_id: 0
+  max_depth: 6
+  n_estimators: 600
+  learning_rate: 0.05
+  subsample: 0.8
+  colsample_bytree: 0.8
+  max_bin: 256
+  nthread: 4
+  eval_metric: rmse
+
+runtime:
+  max_concurrent_jobs: 1
+  respect_pause_flag: true
+  work_window:
+    start_hhmm: "06:00"
+    end_hhmm: "24:00"

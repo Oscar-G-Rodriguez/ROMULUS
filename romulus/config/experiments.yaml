@@ -1,0 +1,28 @@
+# Grid definitions for experiments. The runner will iterate rows in `grids`.
+meta:
+  universe_id: test_12
+  liquidity_usd_min: [10000000, 20000000]
+  cost_bps_roundtrip: [10, 15, 25]
+  beta_target: [0.0, 0.2, 0.5]
+
+grids:
+  - name: tier1_daily_core
+    anchor: daily
+    train_freq: [1D]
+    trade_freq: [1D, 5D, 10D]
+    window_months: [24, 36]
+    horizon_days: [5, 10]
+
+  - name: tier2_weekly
+    anchor: weekly
+    train_freq: [1W]
+    trade_freq: [1W]
+    window_months: [36, 48]
+    horizon_weeks: [1, 2]
+
+  - name: tier3_intraday_light
+    anchor: daily
+    train_freq: [60min]
+    trade_freq: [60min, 1D]
+    window_months: [3, 6]
+    horizon_days: [1, 3]

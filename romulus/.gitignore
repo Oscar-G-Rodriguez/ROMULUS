@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+data/
+logs/
+*.parquet
+*.feather
+*.csv
+*.pkl
+*.model
+*.bin
+*.log
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+.idea/

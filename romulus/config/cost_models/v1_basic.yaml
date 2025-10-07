@@ -1,0 +1,7 @@
+# Simple baseline cost model for smoke tests (flat bps + commission).
+model_id: "v1_basic"
+assumptions:
+  commission_per_share_usd: 0.005
+  slippage_bps: 10
+  borrow_fee_short_annual_pct: 0.00
+signal_delay: "close_to_next_open"

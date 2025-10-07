@@ -1,28 +1,62 @@
-# Grid definitions for experiments. The runner will iterate rows in `grids`.
-meta:
-  universe_id: test_12
-  liquidity_usd_min: [10000000, 20000000]
-  cost_bps_roundtrip: [10, 15, 25]
-  beta_target: [0.0, 0.2, 0.5]
+# Exploratory sweeps across anchors, horizons, CV windows, and models.
+# The runner will create a cartesian product per row and log results to leaderboard.
 
-grids:
-  - name: tier1_daily_core
-    anchor: daily
-    train_freq: [1D]
-    trade_freq: [1D, 5D, 10D]
-    window_months: [24, 36]
-    horizon_days: [5, 10]
+grid:
 
-  - name: tier2_weekly
-    anchor: weekly
-    train_freq: [1W]
-    trade_freq: [1W]
-    window_months: [36, 48]
-    horizon_weeks: [1, 2]
+  # Daily horizon sweeps (ridge) 
+  - anchor: daily
+    feature_blocks: [daily_1d, daily_5d, daily_10d]
+    label_map:
+      daily_1d:  daily_1d
+      daily_5d:  daily_5d
+      daily_10d: daily_10d
+    model: ridge
+    ridge_alpha: [0.5, 1.0, 2.0]
+    train_mode: [rolling, expanding]
+    train_window_months: [24, 36, 48]
+    test_window_days: [5, 10, 20]
+    purge_days: 3
+    embargo_days: 3
+    seed: [42]
 
-  - name: tier3_intraday_light
-    anchor: daily
-    train_freq: [60min]
-    trade_freq: [60min, 1D]
-    window_months: [3, 6]
-    horizon_days: [1, 3]
+  #  Daily horizon sweeps (xgb) 
+  - anchor: daily
+    feature_blocks: [daily_5d, daily_10d]
+    label_map:
+      daily_5d:  daily_5d
+      daily_10d: daily_10d
+    model: xgb
+    xgb:
+      n_estimators: [600, 900]
+      learning_rate: [0.03, 0.06]
+      max_depth: [5, 7]
+      subsample: [0.8]
+      colsample_bytree: [0.7, 0.9]
+      tree_method: [hist]      # switch to gpu_hist if you enable GPU
+      random_state: [42]
+    train_mode: [rolling]
+    train_window_months: [36, 48]
+    test_window_days: [5, 20]
+    purge_days: 3
+    embargo_days: 3
+    seed: [42]
+
+  # Weekly anchor (ridge) 
+  - anchor: weekly
+    feature_blocks: [weekly_1w, weekly_4w]
+    label_map:
+      weekly_1w: weekly_1w
+      weekly_4w: weekly_4w
+    model: ridge
+    ridge_alpha: [0.5, 1.0, 2.0]
+    train_mode: [rolling]
+    train_window_months: [24, 36]
+    test_window_days: [5, 10]   # evaluation window on calendar days (still valid)
+    purge_days: 3
+    embargo_days: 3
+    seed: [42]
+
+selection:
+  metric: rank_ic                  # used by leaderboard to prefer configs
+  tie_breakers: [rmse, r2]
+  promote_top_k: 3                 # number of candidates to keep for shadow tests

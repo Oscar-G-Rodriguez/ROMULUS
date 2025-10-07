@@ -132,7 +132,7 @@ def pit_asof_join(
     age_col_name: Optional[str] = None,            # if None, will create <col>_age_days for each keep col (timestamp mode)
     prefix: Optional[str] = None,                  # optional prefix for retained slow columns
 ) -> pd.DataFrame:
-    """
+    """so
     Generic PIT join: joins slow_df to fast_df without look-ahead.
 
     Returns fast_df plus selected slow columns.

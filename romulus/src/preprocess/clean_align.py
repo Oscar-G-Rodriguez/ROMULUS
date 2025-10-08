@@ -50,9 +50,7 @@ def _fill_and_validate_aligned(df: pd.DataFrame) -> pd.DataFrame:
 
     # Identify isolated single-day gaps (NaNs flanked by non-NaNs)
     price_cols = ["open","high","low","close","adj_close"]
-    for c in price_cols:
-        if c not in df.columns:
-            continue
+    
 
     # A helper mask: missing today but present yesterday and tomorrow
     prev_has = df[price_cols].notna().shift(1).all(axis=1)
@@ -135,6 +133,19 @@ def main() -> None:
 
             # Set ticker column then validate/fill isolated gaps only
             df["ticker"] = tkr
+
+            # require core price columns post-merge; otherwise skip
+            required = ["open", "high", "low", "close", "adj_close"]
+            missing = [c for c in required if c not in df.columns]
+            if missing:
+                print(f"Skip {tkr}: missing columns {missing}")
+                continue
+
+            # enforce numeric types
+            for c in ["open","high","low","close","adj_close","volume"]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+
             df = _fill_and_validate_aligned(df)
 
             ensure_dir(os.path.dirname(dst))

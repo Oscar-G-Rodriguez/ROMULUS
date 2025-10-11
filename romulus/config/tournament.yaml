@@ -49,6 +49,7 @@ modeling:
     strategy: "grid"        # "grid" or "random"
     max_trials: 12          # only used for random
     random_state: 42
+        
   grids:
     RF:
       n_estimators: [200, 400, 800]
@@ -71,3 +72,20 @@ modeling:
       l1_ratio: [0.05, 0.25, 0.5, 0.75]
   n_jobs: -1
 
+selection:
+  decision_timeframe: "1w"         # when you rebalance live/paper
+  target: "y_alpha_p1"             # realized alpha horizon for training selection
+  families: ["LR", "GB"]
+  search:
+    strategy: "grid"               # or "random"
+    max_trials: 12
+    random_state: 42
+  grids:
+    LR:
+      alpha: [0.0005, 0.001, 0.003, 0.01]
+      l1_ratio: [0.05, 0.25, 0.5, 0.75]
+    GB:
+      n_estimators: [200, 400, 800]
+      learning_rate: [0.03, 0.05, 0.1]
+      max_depth: [2, 3, 4]
+      subsample: [0.6, 0.8, 1.0]

@@ -27,8 +27,8 @@ from ..utils.io_utils import load_configs, load_yaml, ensure_dir, append_jsonl, 
 from ..utils.metrics import information_coefficient, rmse
 
 # Optional model families
-HAVE_XGB = False
-HAVE_LGB = False
+HAVE_XGB = True
+HAVE_LGB = True
 try:
     from xgboost import XGBRegressor
     HAVE_XGB = True

@@ -37,4 +37,4 @@ labels:
     - {name: "ret_10d", horizon: "10d"}
     - {name: "ret_4w",  horizon: "4w"}
     - {name: "ret_12w", horizon: "12w"}
-    - {name: "ret_3m",  horizon: "3m"}
+    - {name: "ret_3m",  horizon: "3m"}      `

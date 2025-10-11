@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Any
 from scipy.stats import ttest_rel
-from ..utils.io_utils import ensure_dir, save_json
+from ...utils.io_utils import ensure_dir, save_json
 
 METRICS_DIR = "data/results/metrics"
 

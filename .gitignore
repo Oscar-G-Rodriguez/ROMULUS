@@ -1,0 +1,52 @@
+
+# Data folders (never commit local or raw data)
+romulus/data/raw/
+romulus/data/interim/
+romulus/data/processed/
+romulus/data/models/
+romulus/data/results/
+romulus/data/registry/history/
+romulus/data/meta/data_snapshots/
+
+# Model artifacts and logs
+*.pkl
+*.parquet
+*.feather
+*.csv
+*.jsonl
+*.log
+
+# Python cache and environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+env/
+venv/
+*.env
+.DS_Store
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary or runtime files
+*.tmp
+*.bak
+*.lock
+nohup.out
+
+# Checkpoints or debug outputs
+checkpoints/
+cache/
+logs/
+
+# Compiled binaries
+*.so
+*.dll
+*.dylib
+

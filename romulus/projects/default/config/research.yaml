@@ -1,0 +1,87 @@
+meta:
+  version: 1
+  notes: "Central spec for lookbacks, training/validation windows, CPCV blocks, and backtest spans."
+
+# ── Feature/lookback policy (defaults used by transforms unless overridden)
+features:
+  zscore_lookbacks:
+    regime_vector_years: 2
+    standard_lookback_weeks: 26
+  entropy:
+    plugin:
+      window_weeks: [26, 52]
+      bins: 20
+    lz:
+      window_weeks: [26, 52]
+      encoding: "sign"      # or "quantile3"
+  fracdiff:
+    d_grid: [0.30, 0.45, 0.60]
+    fixed_width_tolerance: 1e-5
+    min_history_weeks: 156   # 3y history recommended
+  range_vol:
+    use: [parkinson, garman_klass, yang_zhang]
+  cointegration:
+    pvalue_max: 0.05
+    half_life_cap_weeks: 104
+
+# ── Training window families (used by train/select scripts)
+training_windows:
+  - id: tw_2y_roll
+    lookback_weeks: 104
+    step_weeks: 1
+    min_coverage: 0.7
+  - id: tw_3y_roll
+    lookback_weeks: 156
+    step_weeks: 1
+    min_coverage: 0.7
+  - id: tw_5y_roll
+    lookback_weeks: 260
+    step_weeks: 1
+    min_coverage: 0.7
+  - id: tw_10y_roll
+    lookback_weeks: 520
+    step_weeks: 1
+    min_coverage: 0.7
+
+# ── CPCV/purged CV windowing (complements cv.yaml)
+cv_windows:
+  purged_kfold:
+    k: 5
+    embargo_frac: 0.02           # same as cv.yaml (kept here so meta tools can read one file)
+  cpcv:
+    dev:
+      M: 10
+      block_weeks: 8
+      gap_weeks: 2
+    weekly_job:
+      M: 30
+      block_weeks: 12
+      gap_weeks: 4
+    weekend_deep:
+      M: 100
+      block_weeks: 26
+      gap_weeks: 4
+    random_state: 4242
+
+# ── Backtest window sets (for reproducible reports)
+backtest_windows:
+  - id: bt_full_hist
+    start: "2005-01-01"
+    end:   null            # to latest
+  - id: bt_gfc_covid_cycle
+    start: "2007-01-01"
+    end:   "2022-12-30"
+  - id: bt_recent_5y
+    start: "2020-01-01"
+    end:   null
+
+# ── Golden-master (tiny) for CI speed & determinism
+golden_master:
+  tickers_max: 50
+  years: 3
+  seed: 4242
+
+# ── Output manifests (where scripts should write their chosen spec)
+outputs:
+  research_manifest: "projects/default/artifacts/meta/research_manifest.json"
+  chosen_backtest_spec: "projects/default/artifacts/meta/backtest_spec.json"

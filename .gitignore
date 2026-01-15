@@ -7,6 +7,9 @@ romulus/data/models/
 romulus/data/results/
 romulus/data/registry/history/
 romulus/data/meta/data_snapshots/
+data/
+sources/
+artifacts/
 
 # Model artifacts and logs
 *.pkl

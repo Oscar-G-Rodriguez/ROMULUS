@@ -31,3 +31,4 @@ Add verified citations (SOURCE_ID + location) once sources are available.
 - scripts/download_alpaca_bars.py: data connector usage details
 - scripts/download_yfinance_daily.py: fallback data connector usage details
 - scripts/check_citations.py: enforcement policy
+- scripts/install_deps.py: dependency management

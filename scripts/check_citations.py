@@ -36,6 +36,8 @@ def find_meaningful_files() -> Set[Path]:
             files.add(path)
         for path in scripts.glob("universe_utils.py"):
             files.add(path)
+        for path in scripts.glob("install_deps.py"):
+            files.add(path)
         providers = scripts / "providers"
         if providers.exists():
             for path in providers.glob("*.py"):

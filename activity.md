@@ -496,3 +496,30 @@ tests/integration/test_end_to_end.py::test_full_backtest_completes PASSED [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "backtest/Implement main backtest engine" marked as passing
+
+### 2026-01-19 17:19 - Task Completed: backtest/Add determinism and lookahead tests
+
+**Completed Steps:**
+- Added tests/integration/test_backtest_determinism.py with determinism, lookahead, and cost checks
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/integration/test_backtest_determinism.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 3 items
+
+tests/integration/test_backtest_determinism.py::test_deterministic_runs PASSED [ 33%]
+tests/integration/test_backtest_determinism.py::test_no_lookahead PASSED [ 66%]
+tests/integration/test_backtest_determinism.py::test_costs_applied PASSED [100%]
+
+============================== 3 passed in 2.45s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "backtest/Add determinism and lookahead tests" marked as passing

@@ -294,7 +294,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Run: pytest tests/integration/test_backtest_determinism.py -v",
       "Verify all tests pass"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "cli",

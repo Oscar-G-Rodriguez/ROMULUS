@@ -190,7 +190,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add docstring: 'Returns target weights where sum(weights) <= 1.0. Only allocate to eligible_tickers.'",
       "No tests needed (abstract class)"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "strategy",

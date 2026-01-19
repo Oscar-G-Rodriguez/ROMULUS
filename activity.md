@@ -369,3 +369,16 @@ tests/unit/test_portfolio.py::test_commission_applied PASSED             [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "portfolio/Implement fill simulation with slippage" marked as passing
+
+### 2026-01-19 17:09 - Task Completed: strategy/Define base strategy interface
+
+**Completed Steps:**
+- Added romulus/strategy/base.py with BaseStrategy ABC
+- Updated romulus/strategy/__init__.py exports
+
+**Tests Run:**
+- None (abstract class only)
+
+**Status:** ? All steps completed
+
+**Updated plan.md:** Task "strategy/Define base strategy interface" marked as passing

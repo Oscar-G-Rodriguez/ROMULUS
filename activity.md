@@ -92,3 +92,71 @@ C:\Python314\python.exe: No module named pytest
 **Issues Encountered:**
 - pytest is not installed and cannot be fetched due to network restrictions (WinError 10013 when pip tries HTTPS).
 - Temporary .tmp subdirectories created during pip attempt could not be removed due to permissions; they remain untracked.
+
+### 2026-01-19 16:43 - Follow-up: pytest install attempt
+
+**Attempted Steps:**
+- Tried installing pytest into repo-local target using repo-local temp/cache directories
+
+**Result:**
+```bash
+$ python -m pip install --no-cache-dir --target .vendor_pytest pytest
+... WinError 10013 ...
+ERROR: No matching distribution found for pytest
+```
+
+**Issues Encountered:**
+- Network access still blocked (WinError 10013), so pytest cannot be downloaded.
+- Repo-local temp directories created by pip (.pip-tmp) could not be removed due to permissions.
+
+### 2026-01-19 16:56 - Task Completed: data/Implement ETF universe with inception gating
+
+**Completed Steps:**
+- Implemented Universe loader with inception-date gating and lookup helpers
+- Added unit tests for inception gating and post-inception eligibility
+- Ran targeted and full pytest suites
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_universe.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 2 items
+
+tests/unit/test_universe.py::test_inception_gating_tlt PASSED            [ 50%]
+tests/unit/test_universe.py::test_all_eligible_after_latest_inception PASSED [100%]
+
+============================== 2 passed in 0.06s ==============================
+
+$ .venv\Scripts\python -m pytest -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.0.0
+collecting ... collected 11 items
+
+tests/unit/test_config.py::TestConfigLoading::test_config_loads_successfully PASSED [  9%]
+tests/unit/test_config.py::TestConfigLoading::test_config_file_not_found PASSED [ 18%]
+tests/unit/test_config.py::TestConfigLoading::test_config_with_defaults PASSED [ 27%]
+tests/unit/test_config.py::TestConfigLoading::test_invalid_date_format PASSED [ 36%]
+tests/unit/test_config.py::TestUniverseConfig::test_universe_json_valid_format PASSED [ 45%]
+tests/unit/test_config.py::TestCostConfig::test_cost_config_defaults PASSED [ 54%]
+tests/unit/test_config.py::TestCostConfig::test_cost_config_validation PASSED [ 63%]
+tests/unit/test_config.py::TestExecutionConfig::test_execution_config_defaults PASSED [ 72%]
+tests/unit/test_config.py::TestExecutionConfig::test_cash_buffer_validation PASSED [ 81%]
+tests/unit/test_universe.py::test_inception_gating_tlt PASSED            [ 90%]
+tests/unit/test_universe.py::test_all_eligible_after_latest_inception PASSED [100%]
+
+============================= 11 passed in 0.21s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "data/Implement ETF universe with inception gating" marked as passing

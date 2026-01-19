@@ -56,7 +56,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_all_eligible_after_latest_inception() to verify all 4 ETFs eligible after 2002-07-26",
       "Run: pytest tests/unit/test_universe.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "data",

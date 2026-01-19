@@ -1,55 +1,55 @@
+# Data cache (downloaded market data)
+data/cache/
 
-# Data folders (never commit local or raw data)
-romulus/data/raw/
-romulus/data/interim/
-romulus/data/processed/
-romulus/data/models/
-romulus/data/results/
-romulus/data/registry/history/
-romulus/data/meta/data_snapshots/
-data/
-sources/
-artifacts/
+# Output runs (backtest results)
+outputs/runs/
 
-# Model artifacts and logs
-*.pkl
-*.parquet
-*.feather
-*.csv
-*.jsonl
-*.log
-
-# Python cache and environments
+# Python bytecode
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
-.venv/
-env/
-venv/
-*.env
-.DS_Store
+.installed.cfg
+*.egg
 
-# IDE/editor files
-.vscode/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+.env
+
+# IDE
 .idea/
+.vscode/
 *.swp
 *.swo
+*~
 
-# Temporary or runtime files
-*.tmp
-*.bak
-*.lock
-nohup.out
+# OS
+.DS_Store
+Thumbs.db
 
-# Checkpoints or debug outputs
-checkpoints/
-cache/
-logs/
-
-# Compiled binaries
-*.so
-*.dll
-*.dylib
-
+# Jupyter
+.ipynb_checkpoints/

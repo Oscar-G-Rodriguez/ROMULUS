@@ -122,7 +122,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_fill_date_mapping() to verify each decision date maps to next trading day",
       "Run: pytest tests/unit/test_calendar.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "portfolio",

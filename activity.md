@@ -245,3 +245,34 @@ tests/unit/test_calendar.py::test_no_holidays PASSED                     [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "calendar/Generate NYSE trading calendar" marked as passing
+
+### 2026-01-19 17:03 - Task Completed: calendar/Generate Wed/Fri decision calendar with fill date mapping
+
+**Completed Steps:**
+- Added romulus/calendar/decision_days.py with decision date filtering and fill date mapping
+- Extended tests/unit/test_calendar.py with decision calendar and fill-date coverage
+- Updated romulus/calendar/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_calendar.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 5 items
+
+tests/unit/test_calendar.py::test_no_weekends PASSED                     [ 20%]
+tests/unit/test_calendar.py::test_no_holidays PASSED                     [ 40%]
+tests/unit/test_calendar.py::test_decision_calendar_wed_fri_only PASSED  [ 60%]
+tests/unit/test_calendar.py::test_no_holiday_decisions PASSED            [ 80%]
+tests/unit/test_calendar.py::test_fill_date_mapping PASSED               [100%]
+
+============================== 5 passed in 1.16s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "calendar/Generate Wed/Fri decision calendar with fill date mapping" marked as passing

@@ -217,3 +217,31 @@ tests/unit/test_storage.py::test_compute_dataframe_hash_stable PASSED    [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "data/Implement Parquet/JSON storage layer" marked as passing
+
+### 2026-01-19 17:02 - Task Completed: calendar/Generate NYSE trading calendar
+
+**Completed Steps:**
+- Added romulus/calendar/trading_days.py with NYSE trading day utilities
+- Added tests/unit/test_calendar.py for weekends and holiday exclusion
+- Updated romulus/calendar/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_calendar.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 2 items
+
+tests/unit/test_calendar.py::test_no_weekends PASSED                     [ 50%]
+tests/unit/test_calendar.py::test_no_holidays PASSED                     [100%]
+
+============================== 2 passed in 4.49s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "calendar/Generate NYSE trading calendar" marked as passing

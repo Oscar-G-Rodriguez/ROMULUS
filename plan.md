@@ -107,7 +107,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_no_holidays() to verify Christmas 2024-12-25 not in trading days",
       "Run: pytest tests/unit/test_calendar.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "calendar",

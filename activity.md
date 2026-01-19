@@ -336,3 +336,36 @@ tests/unit/test_portfolio.py::test_order_generation_respects_cash_buffer PASSED 
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "portfolio/Implement order generation logic" marked as passing
+
+### 2026-01-19 17:08 - Task Completed: portfolio/Implement fill simulation with slippage
+
+**Completed Steps:**
+- Added romulus/portfolio/fills.py with Fill dataclass and simulate_fills
+- Extended tests/unit/test_portfolio.py with slippage and commission coverage
+- Updated romulus/portfolio/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_portfolio.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 7 items
+
+tests/unit/test_portfolio.py::test_cash_accounting PASSED                [ 14%]
+tests/unit/test_portfolio.py::test_fractional_shares PASSED              [ 28%]
+tests/unit/test_portfolio.py::test_market_value_calculation PASSED       [ 42%]
+tests/unit/test_portfolio.py::test_order_generation_respects_min_notional PASSED [ 57%]
+tests/unit/test_portfolio.py::test_order_generation_respects_cash_buffer PASSED [ 71%]
+tests/unit/test_portfolio.py::test_slippage_applied_correctly PASSED     [ 85%]
+tests/unit/test_portfolio.py::test_commission_applied PASSED             [100%]
+
+============================== 7 passed in 0.03s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "portfolio/Implement fill simulation with slippage" marked as passing

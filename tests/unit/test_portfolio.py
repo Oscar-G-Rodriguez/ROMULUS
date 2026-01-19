@@ -2,26 +2,29 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date
 
 import pytest
 
 from romulus.portfolio.account import Portfolio
-from romulus.portfolio.orders import generate_orders
-
-
-@dataclass
-class DummyFill:
-    ticker: str
-    shares: float
-    net_cost: float
-    fill_date: date
+from romulus.portfolio.fills import Fill, simulate_fills
+from romulus.portfolio.orders import Order, generate_orders
 
 
 def test_cash_accounting() -> None:
     portfolio = Portfolio(cash=1000.0, positions={})
-    fills = [DummyFill(ticker="SPY", shares=1.0, net_cost=105.0, fill_date=date(2024, 1, 2))]
+    fills = [
+        Fill(
+            ticker="SPY",
+            shares=1.0,
+            fill_price=100.0,
+            fill_date=date(2024, 1, 2),
+            commission=0.0,
+            slippage_cost=5.0,
+            gross_value=100.0,
+            net_cost=105.0,
+        )
+    ]
 
     portfolio.apply_fills(fills)
 
@@ -30,7 +33,18 @@ def test_cash_accounting() -> None:
 
 def test_fractional_shares() -> None:
     portfolio = Portfolio(cash=500.0, positions={})
-    fills = [DummyFill(ticker="SPY", shares=2.5, net_cost=250.0, fill_date=date(2024, 1, 2))]
+    fills = [
+        Fill(
+            ticker="SPY",
+            shares=2.5,
+            fill_price=100.0,
+            fill_date=date(2024, 1, 2),
+            commission=0.0,
+            slippage_cost=0.0,
+            gross_value=250.0,
+            net_cost=250.0,
+        )
+    ]
 
     portfolio.apply_fills(fills)
 
@@ -74,3 +88,42 @@ def test_order_generation_respects_cash_buffer() -> None:
 
     assert len(orders) == 1
     assert orders[0].shares == pytest.approx(9.9)
+
+
+def test_slippage_applied_correctly() -> None:
+    orders = [
+        Order(ticker="SPY", shares=10.0, decision_date=date(2024, 1, 2), target_weight=0.5),
+        Order(ticker="SPY", shares=-10.0, decision_date=date(2024, 1, 2), target_weight=0.5),
+    ]
+
+    fills = simulate_fills(
+        orders,
+        fill_prices={"SPY": 100.0},
+        fill_date=date(2024, 1, 3),
+        slippage_bps=10.0,
+        commission=0.0,
+    )
+
+    assert fills[0].fill_price == pytest.approx(100.1)
+    assert fills[1].fill_price == pytest.approx(99.9)
+
+
+def test_commission_applied() -> None:
+    orders = [
+        Order(ticker="SPY", shares=1.0, decision_date=date(2024, 1, 2), target_weight=1.0)
+    ]
+
+    fills = simulate_fills(
+        orders,
+        fill_prices={"SPY": 100.0},
+        fill_date=date(2024, 1, 3),
+        slippage_bps=10.0,
+        commission=1.0,
+    )
+
+    expected_fill_price = 100.0 * 1.001
+    expected_gross = expected_fill_price
+    expected_slippage = expected_gross * 0.001
+    expected_net = expected_gross + 1.0 + expected_slippage
+
+    assert fills[0].net_cost == pytest.approx(expected_net)

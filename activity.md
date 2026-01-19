@@ -276,3 +276,32 @@ tests/unit/test_calendar.py::test_fill_date_mapping PASSED               [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "calendar/Generate Wed/Fri decision calendar with fill date mapping" marked as passing
+
+### 2026-01-19 17:05 - Task Completed: portfolio/Implement Portfolio account tracker
+
+**Completed Steps:**
+- Added romulus/portfolio/account.py with Portfolio class and accounting helpers
+- Added tests/unit/test_portfolio.py for cash, fractional shares, and valuation
+- Updated romulus/portfolio/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_portfolio.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 3 items
+
+tests/unit/test_portfolio.py::test_cash_accounting PASSED                [ 33%]
+tests/unit/test_portfolio.py::test_fractional_shares PASSED              [ 66%]
+tests/unit/test_portfolio.py::test_market_value_calculation PASSED       [100%]
+
+============================== 3 passed in 0.03s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "portfolio/Implement Portfolio account tracker" marked as passing

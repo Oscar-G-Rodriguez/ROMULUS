@@ -140,7 +140,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_market_value_calculation() to verify total value computed correctly",
       "Run: pytest tests/unit/test_portfolio.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "portfolio",

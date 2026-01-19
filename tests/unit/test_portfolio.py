@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+import pytest
+
 from romulus.portfolio.account import Portfolio
+from romulus.portfolio.orders import generate_orders
 
 
 @dataclass
@@ -40,3 +43,34 @@ def test_market_value_calculation() -> None:
 
     assert portfolio.compute_market_value(prices) == 400.0
     assert portfolio.get_total_value(prices) == 500.0
+
+
+def test_order_generation_respects_min_notional() -> None:
+    orders = generate_orders(
+        {"SPY": 0.001},
+        current_positions={},
+        prices={"SPY": 100.0},
+        cash=1000.0,
+        total_value=1000.0,
+        min_notional=1.0,
+        cash_buffer_pct=0.01,
+        decision_date=date(2024, 1, 2),
+    )
+
+    assert orders == []
+
+
+def test_order_generation_respects_cash_buffer() -> None:
+    orders = generate_orders(
+        {"SPY": 1.0},
+        current_positions={},
+        prices={"SPY": 100.0},
+        cash=1000.0,
+        total_value=1000.0,
+        min_notional=1.0,
+        cash_buffer_pct=0.01,
+        decision_date=date(2024, 1, 2),
+    )
+
+    assert len(orders) == 1
+    assert orders[0].shares == pytest.approx(9.9)

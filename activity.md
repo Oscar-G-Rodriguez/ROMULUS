@@ -305,3 +305,34 @@ tests/unit/test_portfolio.py::test_market_value_calculation PASSED       [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "portfolio/Implement Portfolio account tracker" marked as passing
+
+### 2026-01-19 17:06 - Task Completed: portfolio/Implement order generation logic
+
+**Completed Steps:**
+- Added romulus/portfolio/orders.py with Order dataclass and generate_orders
+- Extended tests/unit/test_portfolio.py with min notional and cash buffer checks
+- Updated romulus/portfolio/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_portfolio.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 5 items
+
+tests/unit/test_portfolio.py::test_cash_accounting PASSED                [ 20%]
+tests/unit/test_portfolio.py::test_fractional_shares PASSED              [ 40%]
+tests/unit/test_portfolio.py::test_market_value_calculation PASSED       [ 60%]
+tests/unit/test_portfolio.py::test_order_generation_respects_min_notional PASSED [ 80%]
+tests/unit/test_portfolio.py::test_order_generation_respects_cash_buffer PASSED [100%]
+
+============================== 5 passed in 0.03s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "portfolio/Implement order generation logic" marked as passing

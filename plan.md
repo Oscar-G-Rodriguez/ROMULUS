@@ -158,7 +158,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_order_generation_respects_cash_buffer() to verify 1% cash buffer maintained",
       "Run: pytest tests/unit/test_portfolio.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "portfolio",

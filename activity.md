@@ -579,3 +579,15 @@ Outputs saved to: outputs\runs\20260119_222330_2bbb16
 **Status:** ? All steps completed
 
 **Updated plan.md:** Task "cli/Create example run and verify outputs" marked as passing
+
+### 2026-01-19 17:25 - Task Completed: documentation/Create comprehensive README with usage examples
+
+**Completed Steps:**
+- Expanded README.md with configuration, output structure, strategy guide, testing, and development sections
+
+**Tests Run:**
+- None (documentation update)
+
+**Status:** ? All steps completed
+
+**Updated plan.md:** Task "documentation/Create comprehensive README with usage examples" marked as passing

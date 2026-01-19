@@ -1,0 +1,24 @@
+{
+  "etfs": [
+    {
+      "ticker": "SPY",
+      "name": "SPDR S&P 500 ETF Trust",
+      "inception_date": "1993-01-22"
+    },
+    {
+      "ticker": "QQQ",
+      "name": "Invesco QQQ Trust",
+      "inception_date": "1999-03-10"
+    },
+    {
+      "ticker": "IWM",
+      "name": "iShares Russell 2000 ETF",
+      "inception_date": "2000-05-22"
+    },
+    {
+      "ticker": "TLT",
+      "name": "iShares 20+ Year Treasury Bond ETF",
+      "inception_date": "2002-07-26"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "**",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat\\(setup\\): initialize project structure and dependencies\n\n- Verified directory structure exists: romulus/{data,calendar,portfolio,strategy,backtest,config,cli}\n- Verified tests/{unit,integration} directories\n- Verified configs/, data/cache/, outputs/runs/ directories\n- Verified pyproject.toml with all required dependencies\n- Verified .gitignore and README.md\n- Confirmed all imports work: pandas, numpy, yfinance, pydantic, pyarrow, click, pytest, pandas-market-calendars, pyyaml\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(\"venv/Scripts/python.exe\" -m pytest tests/unit/test_config.py -v)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat\\(setup\\): create config files and validation schemas\n\n- Created configs/universe_default.json with 4 ETFs \\(SPY, QQQ, IWM, TLT\\) and inception dates\n- Created configs/etf_equal_weight.yaml per PRD Section 7.1\n- Implemented romulus/config/schema.py with pydantic models:\n  - BacktestConfig, BacktestSettings, UniverseConfig, StrategyConfig\n  - ExecutionConfig, CostConfig, DataConfig, OutputConfig\n- Added load_config\\(path\\) function for YAML config loading\n- Added 9 unit tests for config validation\n\nAll tests passing.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(rm -rf *)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)"
+    ]
+  }
+}

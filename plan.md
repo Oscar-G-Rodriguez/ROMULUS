@@ -40,7 +40,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Create test: tests/unit/test_config.py with test_config_loads_successfully()",
       "Run: pytest tests/unit/test_config.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "data",

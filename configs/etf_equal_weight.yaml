@@ -1,0 +1,31 @@
+backtest:
+  name: "ETF Equal Weight Baseline"
+  start_date: "2010-01-01"
+  end_date: "2024-12-31"
+  initial_cash: 10000.0
+
+universe:
+  source: "configs/universe_default.json"
+
+strategy:
+  type: "equal_weight"
+
+execution:
+  decision_days: ["wednesday", "friday"]
+  decision_time: "close"
+  fill_time: "open"
+  fractional_shares: true
+  min_order_notional: 1.0
+  cash_buffer_pct: 0.01
+
+costs:
+  commission_per_trade: 0.0
+  slippage_bps: 5.0
+
+data:
+  source: "yfinance"
+  cache_dir: "data/cache"
+  adjustment: "split_and_dividend"
+
+output:
+  run_dir: "outputs/runs"

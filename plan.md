@@ -74,7 +74,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_cache_hit_skip_download() to verify cache hits skip yfinance call",
       "Run: pytest tests/unit/test_ingestion.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "data",

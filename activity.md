@@ -160,3 +160,31 @@ tests/unit/test_universe.py::test_all_eligible_after_latest_inception PASSED [10
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "data/Implement ETF universe with inception gating" marked as passing
+
+### 2026-01-19 17:00 - Task Completed: data/Implement yfinance data ingestion with caching
+
+**Completed Steps:**
+- Added romulus/data/ingestion.py with per-ticker caching and checksum tracking
+- Added unit tests for cache creation and cache-hit behavior
+- Updated romulus/data/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_ingestion.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 2 items
+
+tests/unit/test_ingestion.py::test_data_fetch_and_cache PASSED           [ 50%]
+tests/unit/test_ingestion.py::test_cache_hit_skip_download PASSED        [100%]
+
+============================== 2 passed in 5.46s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "data/Implement yfinance data ingestion with caching" marked as passing

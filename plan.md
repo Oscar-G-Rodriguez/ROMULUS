@@ -274,7 +274,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_full_backtest_completes() to verify backtest runs without errors",
       "Run: pytest tests/integration/test_end_to_end.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backtest",

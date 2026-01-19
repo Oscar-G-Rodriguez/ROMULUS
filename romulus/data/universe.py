@@ -68,6 +68,10 @@ class Universe:
             if as_of_date >= entry.inception_date
         ]
 
+    def get_all_tickers(self) -> List[str]:
+        """Return all tickers in the universe."""
+        return [entry.ticker for entry in self._entries]
+
     def get_inception_date(self, ticker: str) -> date:
         """Return the inception date for a ticker."""
         if ticker not in self._by_ticker:

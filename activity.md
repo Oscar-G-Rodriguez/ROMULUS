@@ -468,3 +468,31 @@ tests/unit/test_backtest.py::test_metrics_calculation PASSED             [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "backtest/Implement performance metrics" marked as passing
+
+### 2026-01-19 17:17 - Task Completed: backtest/Implement main backtest engine
+
+**Completed Steps:**
+- Added romulus/backtest/engine.py with BacktestEngine orchestration
+- Implemented output writing (orders, fills, positions, portfolio value, metrics, manifest)
+- Added tests/integration/test_end_to_end.py for end-to-end run
+- Updated romulus/backtest/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/integration/test_end_to_end.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 1 item
+
+tests/integration/test_end_to_end.py::test_full_backtest_completes PASSED [100%]
+
+============================== 1 passed in 1.25s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "backtest/Implement main backtest engine" marked as passing

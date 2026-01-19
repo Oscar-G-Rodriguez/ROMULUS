@@ -523,3 +523,28 @@ tests/integration/test_backtest_determinism.py::test_costs_applied PASSED [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "backtest/Add determinism and lookahead tests" marked as passing
+
+### 2026-01-19 17:21 - Task Completed: cli/Implement CLI interface with click
+
+**Completed Steps:**
+- Added romulus/cli/main.py with click CLI (group + run command)
+- Updated romulus/cli/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m romulus.cli.main run --config configs/etf_equal_weight.yaml --help
+<frozen runpy>:128: RuntimeWarning: 'romulus.cli.main' found in sys.modules after import of package 'romulus.cli', but prior to execution of 'romulus.cli.main'; this may result in unpredictable behaviour
+Usage: python -m romulus.cli.main run [OPTIONS]
+
+  Run a backtest from a configuration file.
+
+Options:
+  --config TEXT  Path to YAML config file  [required]
+  --start TEXT   Override start date (YYYY-MM-DD)
+  --end TEXT     Override end date (YYYY-MM-DD)
+  --help         Show this message and exit.
+```
+
+**Status:** ? All steps completed
+
+**Updated plan.md:** Task "cli/Implement CLI interface with click" marked as passing

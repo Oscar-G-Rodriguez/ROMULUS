@@ -312,7 +312,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Make CLI executable: if __name__ == '__main__': run()",
       "Test: python -m romulus.cli.main run --config configs/etf_equal_weight.yaml --help"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "cli",

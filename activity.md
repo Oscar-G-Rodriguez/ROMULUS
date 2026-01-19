@@ -382,3 +382,32 @@ tests/unit/test_portfolio.py::test_commission_applied PASSED             [100%]
 **Status:** ? All steps completed
 
 **Updated plan.md:** Task "strategy/Define base strategy interface" marked as passing
+
+### 2026-01-19 17:10 - Task Completed: strategy/Implement equal-weight baseline strategy
+
+**Completed Steps:**
+- Added romulus/strategy/equal_weight.py with EqualWeightStrategy
+- Added tests/unit/test_strategy.py for weight validation
+- Updated romulus/strategy/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_strategy.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 3 items
+
+tests/unit/test_strategy.py::test_equal_weight_sums_to_one PASSED        [ 33%]
+tests/unit/test_strategy.py::test_equal_weight_excludes_ineligible PASSED [ 66%]
+tests/unit/test_strategy.py::test_equal_weight_handles_single_ticker PASSED [100%]
+
+============================== 3 passed in 0.37s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "strategy/Implement equal-weight baseline strategy" marked as passing

@@ -205,7 +205,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_equal_weight_handles_single_ticker() to verify works with 1 ticker (weight = 1.0)",
       "Run: pytest tests/unit/test_strategy.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backtest",

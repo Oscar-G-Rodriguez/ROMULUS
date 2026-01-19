@@ -26,7 +26,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Install dependencies: pip install -e .",
       "Verify imports work: python -c 'import pandas, numpy, yfinance, pydantic, pyarrow, click, pytest'"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "setup",

@@ -411,3 +411,31 @@ tests/unit/test_strategy.py::test_equal_weight_handles_single_ticker PASSED [100
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "strategy/Implement equal-weight baseline strategy" marked as passing
+
+### 2026-01-19 17:11 - Task Completed: backtest/Implement cost model
+
+**Completed Steps:**
+- Added romulus/backtest/costs.py with slippage and commission helpers
+- Added tests/unit/test_backtest.py with cost validation
+- Updated romulus/backtest/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_backtest.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 2 items
+
+tests/unit/test_backtest.py::test_slippage_calculation PASSED            [ 50%]
+tests/unit/test_backtest.py::test_commission_calculation PASSED          [100%]
+
+============================== 2 passed in 0.03s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "backtest/Implement cost model" marked as passing

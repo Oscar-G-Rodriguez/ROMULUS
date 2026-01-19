@@ -222,7 +222,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_commission_calculation() to verify commission applied when shares > 0",
       "Run: pytest tests/unit/test_backtest.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backtest",

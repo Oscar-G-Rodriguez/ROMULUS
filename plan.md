@@ -91,7 +91,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_json_roundtrip() to verify save/load produces identical dict",
       "Run: pytest tests/unit/test_storage.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "calendar",

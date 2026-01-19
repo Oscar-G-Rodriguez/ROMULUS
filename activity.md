@@ -188,3 +188,32 @@ tests/unit/test_ingestion.py::test_cache_hit_skip_download PASSED        [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "data/Implement yfinance data ingestion with caching" marked as passing
+
+### 2026-01-19 17:01 - Task Completed: data/Implement Parquet/JSON storage layer
+
+**Completed Steps:**
+- Added romulus/data/storage.py with Parquet/JSON helpers and DataFrame hash
+- Added tests/unit/test_storage.py with roundtrip and hash coverage
+- Updated romulus/data/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_storage.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 3 items
+
+tests/unit/test_storage.py::test_parquet_roundtrip PASSED                [ 33%]
+tests/unit/test_storage.py::test_json_roundtrip PASSED                   [ 66%]
+tests/unit/test_storage.py::test_compute_dataframe_hash_stable PASSED    [100%]
+
+============================== 3 passed in 0.63s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "data/Implement Parquet/JSON storage layer" marked as passing

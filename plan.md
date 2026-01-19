@@ -242,7 +242,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Add test_metrics_calculation() with known portfolio_value series",
       "Run: pytest tests/unit/test_backtest.py -v"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "backtest",

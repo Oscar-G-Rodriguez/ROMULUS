@@ -439,3 +439,32 @@ tests/unit/test_backtest.py::test_commission_calculation PASSED          [100%]
 **Status:** ? All steps completed, tests passing
 
 **Updated plan.md:** Task "backtest/Implement cost model" marked as passing
+
+### 2026-01-19 17:12 - Task Completed: backtest/Implement performance metrics
+
+**Completed Steps:**
+- Added romulus/backtest/metrics.py with performance metric calculations
+- Extended tests/unit/test_backtest.py with metrics validation
+- Updated romulus/backtest/__init__.py exports
+
+**Tests Run:**
+```bash
+$ .venv\Scripts\python -m pytest tests/unit/test_backtest.py -v
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Oscar\Documents\GitHub\ROMULUS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Oscar\Documents\GitHub\ROMULUS
+configfile: pyproject.toml
+plugins: cov-7.0.0
+collecting ... collected 3 items
+
+tests/unit/test_backtest.py::test_slippage_calculation PASSED            [ 33%]
+tests/unit/test_backtest.py::test_commission_calculation PASSED          [ 66%]
+tests/unit/test_backtest.py::test_metrics_calculation PASSED             [100%]
+
+============================== 3 passed in 0.40s ==============================
+```
+
+**Status:** ? All steps completed, tests passing
+
+**Updated plan.md:** Task "backtest/Implement performance metrics" marked as passing

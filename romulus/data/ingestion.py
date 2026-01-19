@@ -34,6 +34,13 @@ def _save_checksums(path: Path, checksums: Dict[str, str]) -> None:
 
 def _normalize_columns(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
+        level0 = df.columns.get_level_values(0)
+        level1 = df.columns.get_level_values(1)
+        price_fields = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
+        if set(level0).intersection(price_fields):
+            return df.swaplevel(0, 1, axis=1).sort_index(axis=1)
+        if set(level1).intersection(price_fields):
+            return df.copy()
         return df.copy()
     normalized = df.copy()
     normalized.columns = pd.MultiIndex.from_product([[ticker], df.columns])

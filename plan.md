@@ -328,7 +328,7 @@ This plan implements the ROMULUS Phase A backtesting engine as specified in `PRD
       "Verify metrics.json exists and contains: total_return, cagr, sharpe, max_drawdown, final_value",
       "Load portfolio_value.parquet and verify final value > initial value (assuming positive returns)"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "documentation",

@@ -548,3 +548,34 @@ Options:
 **Status:** ? All steps completed
 
 **Updated plan.md:** Task "cli/Implement CLI interface with click" marked as passing
+
+### 2026-01-19 17:23 - Task Completed: cli/Create example run and verify outputs
+
+**Completed Steps:**
+- Ran example backtest via CLI
+- Verified outputs directory and required artifacts
+
+**Run Executed:**
+```bash
+$ .venv\Scripts\python -m romulus.cli.main run --config configs/etf_equal_weight.yaml
+<frozen runpy>:128: RuntimeWarning: 'romulus.cli.main' found in sys.modules after import of package 'romulus.cli', but prior to execution of 'romulus.cli.main'; this may result in unpredictable behaviour
+Final Value: 53741.98
+Total Return: 437.95%
+CAGR: 31.91%
+Sharpe: 1.46
+Max Drawdown: -30.39%
+Outputs saved to: outputs\runs\20260119_222330_2bbb16
+```
+
+**Verification:**
+- manifest.json exists with config_hash, data_checksums, status, execution_time_seconds, created_at
+- orders.parquet exists and loads
+- fills.parquet exists with required columns
+- positions.parquet exists
+- portfolio_value.parquet exists
+- metrics.json exists with total_return, cagr, sharpe, max_drawdown, final_value
+- Final portfolio value > initial value
+
+**Status:** ? All steps completed
+
+**Updated plan.md:** Task "cli/Create example run and verify outputs" marked as passing

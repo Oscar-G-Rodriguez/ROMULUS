@@ -6,10 +6,17 @@ from romulus.config.schema import (
     CostConfig,
     DataConfig,
     ExecutionConfig,
+    LeaderboardConfig,
+    MetaConfig,
     OutputConfig,
     StrategyConfig,
+    SuiteConfig,
+    SuiteOutputConfig,
+    SuiteStrategyConfig,
     UniverseConfig,
+    WarmupConfig,
     load_config,
+    load_suite_config,
 )
 
 __all__ = [
@@ -18,8 +25,15 @@ __all__ = [
     "CostConfig",
     "DataConfig",
     "ExecutionConfig",
+    "LeaderboardConfig",
+    "MetaConfig",
     "OutputConfig",
     "StrategyConfig",
+    "SuiteConfig",
+    "SuiteOutputConfig",
+    "SuiteStrategyConfig",
     "UniverseConfig",
+    "WarmupConfig",
     "load_config",
+    "load_suite_config",
 ]

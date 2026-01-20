@@ -20,6 +20,7 @@ from romulus.data.universe import Universe
 from romulus.portfolio.account import Portfolio
 from romulus.portfolio.fills import simulate_fills
 from romulus.portfolio.orders import generate_orders
+from romulus.strategy.cash_only import CashOnlyStrategy
 from romulus.strategy.equal_weight import EqualWeightStrategy
 
 
@@ -29,6 +30,7 @@ class BacktestEngine:
     def __init__(self) -> None:
         self._strategy_map = {
             "equal_weight": EqualWeightStrategy,
+            "cash_only": CashOnlyStrategy,
         }
 
     def run(self, config: BacktestConfig) -> Dict[str, object]:
@@ -157,6 +159,7 @@ class BacktestEngine:
         manifest = {
             "run_id": run_id,
             "config_hash": config_hash,
+            "config_name": config.backtest.name,
             "data_checksums": self._load_checksums(config.data.cache_dir),
             "status": "completed",
             "execution_time_seconds": (datetime.now(timezone.utc) - start_time).total_seconds(),

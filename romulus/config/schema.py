@@ -45,6 +45,56 @@ class StrategyConfig(BaseModel):
     params: Optional[dict] = Field(default=None, description="Optional strategy parameters")
 
 
+class SuiteStrategyConfig(BaseModel):
+    """Configuration for a strategy within a suite."""
+
+    name: str = Field(description="Unique strategy name in suite")
+    type: str = Field(description="Strategy type identifier (e.g., 'equal_weight')")
+    params: Optional[dict] = Field(default=None, description="Optional strategy parameters")
+
+
+class WarmupConfig(BaseModel):
+    """Configuration for warmup and rebase."""
+
+    enabled: bool = Field(default=True, description="Whether to run warmup simulation")
+    start_date: Optional[str] = Field(default=None, description="Warmup start date in YYYY-MM-DD format")
+    rebase: bool = Field(default=True, description="Rebase scored run to warmup weights")
+
+    @field_validator("start_date")
+    @classmethod
+    def validate_warmup_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            date.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"Invalid warmup date format: {v}. Use YYYY-MM-DD.")
+        return v
+
+
+class LeaderboardConfig(BaseModel):
+    """Configuration for strategy leaderboard."""
+
+    window: int = Field(default=20, ge=1, description="Rolling window length for metrics")
+    dd_limit: float = Field(default=-0.2, description="Max drawdown gate (negative fraction)")
+    turnover_limit: float = Field(default=1.0, ge=0, description="Max turnover gate per period")
+
+
+class MetaConfig(BaseModel):
+    """Configuration for optional meta-strategy selection."""
+
+    enabled: bool = Field(default=False, description="Enable meta-strategy selection")
+    min_periods_before_selection: int = Field(
+        default=4,
+        ge=0,
+        description="Minimum periods before selecting from leaderboard",
+    )
+    baseline_strategy: str = Field(
+        default="equal_weight",
+        description="Baseline strategy used before selection begins",
+    )
+
+
 class ExecutionConfig(BaseModel):
     """Configuration for order execution."""
 
@@ -118,6 +168,15 @@ class OutputConfig(BaseModel):
     )
 
 
+class SuiteOutputConfig(BaseModel):
+    """Configuration for suite output files."""
+
+    run_dir: str = Field(
+        default="outputs/suite_runs",
+        description="Base directory for suite outputs"
+    )
+
+
 class BacktestConfig(BaseModel):
     """
     Complete backtest configuration.
@@ -133,6 +192,21 @@ class BacktestConfig(BaseModel):
     costs: CostConfig = Field(default_factory=CostConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+
+
+class SuiteConfig(BaseModel):
+    """Configuration for running a strategy suite."""
+
+    backtest: BacktestSettings
+    universe: UniverseConfig
+    strategies: List[SuiteStrategyConfig]
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    costs: CostConfig = Field(default_factory=CostConfig)
+    data: DataConfig = Field(default_factory=DataConfig)
+    output: SuiteOutputConfig = Field(default_factory=SuiteOutputConfig)
+    warmup: WarmupConfig = Field(default_factory=WarmupConfig)
+    leaderboard: LeaderboardConfig = Field(default_factory=LeaderboardConfig)
+    meta: MetaConfig = Field(default_factory=MetaConfig)
 
 
 def load_config(path: str) -> BacktestConfig:
@@ -157,3 +231,23 @@ def load_config(path: str) -> BacktestConfig:
         raw_config = yaml.safe_load(f)
 
     return BacktestConfig(**raw_config)
+
+
+def load_suite_config(path: str) -> SuiteConfig:
+    """
+    Load and validate a suite configuration from a YAML file.
+
+    Args:
+        path: Path to the YAML configuration file.
+
+    Returns:
+        Validated SuiteConfig instance.
+    """
+    config_path = Path(path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    with open(config_path, "r") as f:
+        raw_config = yaml.safe_load(f)
+
+    return SuiteConfig(**raw_config)

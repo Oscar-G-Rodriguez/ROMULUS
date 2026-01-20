@@ -1,122 +1,75 @@
-# ROMULUS Phase A
+# ROMULUS Phase B
 
-**Deterministic ETF Backtesting Engine**
+ROMULUS is a deterministic ETF basket backtesting engine built around Wednesday/Friday execution semantics, a configurable cost model, and strict point-in-time data handling. Phase B extends the system with a strategy suite runner, shadow portfolios, and a no-lookahead leaderboard to compare strategies under identical market conditions. Optional meta-strategy selection lets the engine follow the best eligible strategy over time. All runs are auditable with full decision logs, trades, and reliability reporting.
 
-ROMULUS is a professional-grade backtesting system designed to eliminate survivorship bias and provide robust, auditable backtest results for quantitative strategy research. It operates on daily bars with Wednesday/Friday decision points, strict point-in-time data handling, and deterministic outputs.
-
-## Features
-
-- **Survivorship-Bias Free**: Only includes ETFs that existed at each point in time
-- **No Lookahead Bias**: Strict separation between decision time and fill time
-- **Deterministic**: Same inputs always produce identical outputs
-- **Auditable**: Every backtest produces complete records with checksums
-- **Modular**: Easy to add new strategies without changing the engine
-
-## Installation
+## Install
 
 ```bash
-git clone <repository-url>
-cd ROMULUS
+python -m venv venv
+venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-## Quick Start
+## Quickstart (first 2 minutes)
 
 ```bash
-python -m romulus.cli.main run --config configs/etf_equal_weight.yaml
-```
-
-Quickstart with defaults (CWD-aware resolver):
-
-```bash
+romulus init
+romulus config validate --config configs/default.yaml
 romulus run
+romulus suite
 ```
 
-Override config resolution:
+Example output snippet:
 
-- Set `ROMULUS_CONFIG` to a config file path
-- Or pass `--config path/to/config.yaml`
+```
+Using config: configs\default.yaml
+Effective settings:
+  backtest.start_date: 2010-01-01
+  backtest.end_date: 2024-12-31
+  backtest.initial_cash: 10000.0
+Outputs will be saved under: outputs\runs
+```
 
-Pre-run edit wizard:
-
-- By default, `romulus run` prompts to edit key fields before running
-- Use `--no-edit` to skip the wizard
+Outputs live under `outputs/runs/{run_id}` for single runs and `outputs/suite_runs/{run_id}` for suites.
 
 ## Configuration
 
-ROMULUS is configured via YAML. Key sections include:
+ROMULUS supports two config types:
 
-- `backtest`: name, start/end dates, initial cash
-- `universe`: path to ETF universe JSON
-- `strategy`: strategy type and optional parameters
-- `execution`: decision days, fill/decision times, min notional, cash buffer
-- `costs`: commission and slippage
-- `data`: data source and cache directory
-- `output`: output run directory
+- **Run config**: a single strategy backtest (`romulus run`).
+- **Suite config**: multiple strategies with shadow portfolios, leaderboard ranking, and optional meta-selection (`romulus suite`).
 
-Example snippet:
+Warmup + rebase:
 
-```yaml
-backtest:
-  name: "ETF Equal Weight Baseline"
-  start_date: "2010-01-01"
-  end_date: "2024-12-31"
-  initial_cash: 10000.0
+- `warmup.enabled`: whether to run a warmup simulation.
+- `warmup.start_date`: optional earlier start date for warmup.
+- `warmup.rebase`: rebase the scored run to warmup weights at the first scored decision date.
 
-universe:
-  source: "configs/universe_default.json"
+Meta-strategy selection:
 
-strategy:
-  type: "equal_weight"
-```
+- `meta.enabled`: turn on selecting the top-ranked strategy.
+- `meta.min_periods_before_selection`: use baseline until this many periods pass.
+- `meta.baseline_strategy`: strategy used before selection starts.
 
-## Output Structure
+Key knobs:
 
-Each run is saved to `outputs/runs/{run_id}/`:
+- `backtest.start_date`, `backtest.end_date`, `backtest.initial_cash`
+- `costs.commission_per_trade`, `costs.slippage_bps`
+- `execution.cash_buffer_pct`, `execution.min_order_notional`
+- `leaderboard.dd_limit`, `leaderboard.turnover_limit`, `leaderboard.window`
 
-```
-outputs/runs/{run_id}/
-+-- manifest.json
-+-- orders.parquet
-+-- fills.parquet
-+-- positions.parquet
-+-- portfolio_value.parquet
-+-- metrics.json
-```
+## Artifacts
 
-## Adding New Strategies
+Per run or suite, ROMULUS writes auditable artifacts:
 
-Implement the base interface and register it with the engine:
+- `trades.csv` (all fills/trades)
+- `decision_log.jsonl` (decision records)
+- `leaderboard.csv` (suite-only)
+- `reliability_report.json` (suite-only)
 
-```python
-from datetime import date
-from typing import Dict, List
-import pandas as pd
+## Determinism
 
-from romulus.strategy.base import BaseStrategy
-
-class MyStrategy(BaseStrategy):
-    def compute_target_weights(
-        self,
-        as_of_date: date,
-        eligible_tickers: List[str],
-        prices: pd.DataFrame,
-        positions: Dict[str, float],
-    ) -> Dict[str, float]:
-        return {ticker: 1.0 / len(eligible_tickers) for ticker in eligible_tickers}
-```
-
-## Testing
-
-```bash
-pytest tests/ -v
-```
-
-## Development
-
-- Keep functions small and well-documented
-- Add unit tests for new logic
-- Run tests before committing changes
+Re-running the same config with the same cached data should produce identical hashes and leaderboard output. For suites, the leaderboard hash is returned in the run result and written to disk as `leaderboard.csv`. Determinism depends on unchanged configs and input data.
 
 ## License
 

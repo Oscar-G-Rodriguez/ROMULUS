@@ -12,6 +12,19 @@ strategies:
     type: "equal_weight"
   - name: "cash_only"
     type: "cash_only"
+  - name: "inv_vol"
+    type: "inv_vol"
+  - name: "ts_mom"
+    type: "ts_mom"
+  - name: "xsec_mom"
+    type: "xsec_mom"
+  - name: "vol_target"
+    type: "vol_target"
+  - name: "ml_risk_adjusted"
+    type: "ml_risk_adjusted"
+    params:
+      model_family: "ridge"
+      device: "cpu"
 
 execution:
   decision_days: ["wednesday", "friday"]
@@ -20,6 +33,8 @@ execution:
   fractional_shares: true
   min_order_notional: 1.0
   cash_buffer_pct: 0.01
+  max_weight: 0.35
+  turnover_cap: 0.35
 
 costs:
   commission_per_trade: 0.0

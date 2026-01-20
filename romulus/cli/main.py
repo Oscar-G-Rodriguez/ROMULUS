@@ -14,6 +14,7 @@ from romulus import __version__
 from romulus.backtest.engine import BacktestEngine
 from romulus.backtest.suite import SuiteRunner
 from romulus.config.schema import BacktestConfig, SuiteConfig, load_config, load_suite_config
+from romulus.strategy.registry import get_strategy_registry
 
 _REPL_DEFAULT_CONFIG: Path | None = None
 
@@ -78,13 +79,14 @@ def repl() -> None:
 
 @click.group(
     invoke_without_command=True,
-    help="ROMULUS Phase B: strategy suite backtesting and audit-ready analytics.",
+    help="ROMULUS Phase B+: strategy suite backtesting with ML extensions.",
     epilog=(
         "Examples:\n"
         "  romulus init\n"
         "  romulus config validate --config configs/default.yaml\n"
         "  romulus run\n"
         "  romulus suite\n"
+        "  romulus strategies list\n"
         "  romulus runs list\n"
     ),
 )
@@ -173,6 +175,8 @@ def print_effective_settings(config: BacktestConfig) -> None:
     click.echo(f"  execution.fractional_shares: {config.execution.fractional_shares}")
     click.echo(f"  execution.min_order_notional: {config.execution.min_order_notional}")
     click.echo(f"  execution.cash_buffer_pct: {config.execution.cash_buffer_pct}")
+    click.echo(f"  execution.max_weight: {config.execution.max_weight}")
+    click.echo(f"  execution.turnover_cap: {config.execution.turnover_cap}")
     click.echo(f"  costs.commission_per_trade: {config.costs.commission_per_trade}")
     click.echo(f"  costs.slippage_bps: {config.costs.slippage_bps}")
 
@@ -191,6 +195,16 @@ def print_suite_effective_settings(config: SuiteConfig) -> None:
     click.echo(f"  meta.enabled: {config.meta.enabled}")
     click.echo(f"  meta.min_periods_before_selection: {config.meta.min_periods_before_selection}")
     click.echo(f"  meta.baseline_strategy: {config.meta.baseline_strategy}")
+    click.echo(f"  execution.decision_days: {', '.join(config.execution.decision_days)}")
+    click.echo(f"  execution.decision_time: {config.execution.decision_time}")
+    click.echo(f"  execution.fill_time: {config.execution.fill_time}")
+    click.echo(f"  execution.fractional_shares: {config.execution.fractional_shares}")
+    click.echo(f"  execution.min_order_notional: {config.execution.min_order_notional}")
+    click.echo(f"  execution.cash_buffer_pct: {config.execution.cash_buffer_pct}")
+    click.echo(f"  execution.max_weight: {config.execution.max_weight}")
+    click.echo(f"  execution.turnover_cap: {config.execution.turnover_cap}")
+    click.echo(f"  costs.commission_per_trade: {config.costs.commission_per_trade}")
+    click.echo(f"  costs.slippage_bps: {config.costs.slippage_bps}")
     click.echo("  strategies:")
     for strategy in config.strategies:
         click.echo(f"    - {strategy.name}: {strategy.type}")
@@ -257,6 +271,18 @@ def edit_config_interactively(config: BacktestConfig) -> None:
         type=float,
         show_default=True,
     )
+    config.execution.max_weight = click.prompt(
+        "Max weight per ticker",
+        default=config.execution.max_weight,
+        type=float,
+        show_default=True,
+    )
+    config.execution.turnover_cap = click.prompt(
+        "Turnover cap",
+        default=config.execution.turnover_cap,
+        type=float,
+        show_default=True,
+    )
 
     config.costs.commission_per_trade = click.prompt(
         "Commission per trade",
@@ -315,6 +341,18 @@ def edit_suite_interactively(config: SuiteConfig) -> None:
         type=float,
         show_default=True,
     )
+    config.execution.max_weight = click.prompt(
+        "Max weight per ticker",
+        default=config.execution.max_weight,
+        type=float,
+        show_default=True,
+    )
+    config.execution.turnover_cap = click.prompt(
+        "Turnover cap",
+        default=config.execution.turnover_cap,
+        type=float,
+        show_default=True,
+    )
     config.meta.enabled = click.prompt(
         "Meta selection enabled",
         default=config.meta.enabled,
@@ -330,11 +368,11 @@ def edit_suite_interactively(config: SuiteConfig) -> None:
 
 
 def _default_run_template() -> str:
-    return """backtest:\n  name: \"ROMULUS Run Default\"\n  start_date: \"2010-01-01\"\n  end_date: \"2024-12-31\"\n  initial_cash: 10000.0\n\nuniverse:\n  source: \"configs/universe_default.json\"\n\nstrategy:\n  type: \"equal_weight\"\n\nexecution:\n  decision_days: [\"wednesday\", \"friday\"]\n  decision_time: \"close\"\n  fill_time: \"open\"\n  fractional_shares: true\n  min_order_notional: 1.0\n  cash_buffer_pct: 0.01\n\ncosts:\n  commission_per_trade: 0.0\n  slippage_bps: 5.0\n\ndata:\n  source: \"yfinance\"\n  cache_dir: \"data/cache\"\n  adjustment: \"split_and_dividend\"\n\noutput:\n  run_dir: \"outputs/runs\"\n"""
+    return """backtest:\n  name: \"ROMULUS Run Default\"\n  start_date: \"2010-01-01\"\n  end_date: \"2024-12-31\"\n  initial_cash: 10000.0\n\nuniverse:\n  source: \"configs/universe_default.json\"\n\nstrategy:\n  type: \"equal_weight\"\n\nexecution:\n  decision_days: [\"wednesday\", \"friday\"]\n  decision_time: \"close\"\n  fill_time: \"open\"\n  fractional_shares: true\n  min_order_notional: 1.0\n  cash_buffer_pct: 0.01\n  max_weight: 0.35\n  turnover_cap: 0.35\n\ncosts:\n  commission_per_trade: 0.0\n  slippage_bps: 5.0\n\ndata:\n  source: \"yfinance\"\n  cache_dir: \"data/cache\"\n  adjustment: \"split_and_dividend\"\n\noutput:\n  run_dir: \"outputs/runs\"\n"""
 
 
 def _default_suite_template() -> str:
-    return """backtest:\n  name: \"ROMULUS Suite Default\"\n  start_date: \"2010-01-01\"\n  end_date: \"2024-12-31\"\n  initial_cash: 10000.0\n\nuniverse:\n  source: \"configs/universe_default.json\"\n\nstrategies:\n  - name: \"equal_weight\"\n    type: \"equal_weight\"\n  - name: \"cash_only\"\n    type: \"cash_only\"\n\nexecution:\n  decision_days: [\"wednesday\", \"friday\"]\n  decision_time: \"close\"\n  fill_time: \"open\"\n  fractional_shares: true\n  min_order_notional: 1.0\n  cash_buffer_pct: 0.01\n\ncosts:\n  commission_per_trade: 0.0\n  slippage_bps: 5.0\n\ndata:\n  source: \"yfinance\"\n  cache_dir: \"data/cache\"\n  adjustment: \"split_and_dividend\"\n\noutput:\n  run_dir: \"outputs/suite_runs\"\n\nwarmup:\n  enabled: true\n  start_date: \"2008-01-01\"\n  rebase: true\n\nleaderboard:\n  window: 20\n  dd_limit: -0.2\n  turnover_limit: 1.0\n\nmeta:\n  enabled: false\n  min_periods_before_selection: 4\n  baseline_strategy: \"equal_weight\"\n"""
+    return """backtest:\n  name: \"ROMULUS Suite Default\"\n  start_date: \"2010-01-01\"\n  end_date: \"2024-12-31\"\n  initial_cash: 10000.0\n\nuniverse:\n  source: \"configs/universe_default.json\"\n\nstrategies:\n  - name: \"equal_weight\"\n    type: \"equal_weight\"\n  - name: \"cash_only\"\n    type: \"cash_only\"\n  - name: \"inv_vol\"\n    type: \"inv_vol\"\n  - name: \"ts_mom\"\n    type: \"ts_mom\"\n  - name: \"xsec_mom\"\n    type: \"xsec_mom\"\n  - name: \"vol_target\"\n    type: \"vol_target\"\n  - name: \"ml_risk_adjusted\"\n    type: \"ml_risk_adjusted\"\n    params:\n      model_family: \"ridge\"\n      device: \"cpu\"\n\nexecution:\n  decision_days: [\"wednesday\", \"friday\"]\n  decision_time: \"close\"\n  fill_time: \"open\"\n  fractional_shares: true\n  min_order_notional: 1.0\n  cash_buffer_pct: 0.01\n  max_weight: 0.35\n  turnover_cap: 0.35\n\ncosts:\n  commission_per_trade: 0.0\n  slippage_bps: 5.0\n\ndata:\n  source: \"yfinance\"\n  cache_dir: \"data/cache\"\n  adjustment: \"split_and_dividend\"\n\noutput:\n  run_dir: \"outputs/suite_runs\"\n\nwarmup:\n  enabled: true\n  start_date: \"2008-01-01\"\n  rebase: true\n\nleaderboard:\n  window: 20\n  dd_limit: -0.2\n  turnover_limit: 1.0\n\nmeta:\n  enabled: false\n  min_periods_before_selection: 4\n  baseline_strategy: \"equal_weight\"\n"""
 
 
 @cli.command()
@@ -382,6 +420,21 @@ def validate_config(config_path: str, suite_mode: bool) -> None:
 @cli.group()
 def runs() -> None:
     """Utilities for listing runs."""
+
+
+@cli.group()
+def strategies() -> None:
+    """Strategy utilities."""
+
+
+@strategies.command("list")
+def list_strategies() -> None:
+    """List supported strategy types."""
+    registry = get_strategy_registry()
+    click.echo("Supported strategies:")
+    for name, entry in registry.items():
+        description = entry[1]
+        click.echo(f"  {name}: {description}")
 
 
 @runs.command("list")
@@ -468,7 +521,16 @@ def report(run_id: str) -> None:
         click.echo(f"  most_reliable: {report_data.get('most_reliable')}")
 
     click.echo("Artifacts:")
-    for artifact in ("orders.parquet", "fills.parquet", "leaderboard.csv", "reliability_report.json"):
+    for artifact in (
+        "orders.parquet",
+        "fills.parquet",
+        "trades.csv",
+        "holdings.csv",
+        "decision_log.jsonl",
+        "forecasts.csv",
+        "leaderboard.csv",
+        "reliability_report.json",
+    ):
         artifact_path = target / artifact
         if artifact_path.exists():
             click.echo(f"  {format_path_for_display(artifact_path)}")

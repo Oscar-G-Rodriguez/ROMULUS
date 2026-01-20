@@ -6,12 +6,14 @@ import pandas as pd
 
 from romulus.backtest.suite import StrategyState, compute_leaderboard_snapshot
 from romulus.portfolio.account import Portfolio
+from romulus.strategy.equal_weight import EqualWeightStrategy
 
 
 def test_leaderboard_uses_prior_interval_only() -> None:
     state = StrategyState(
         name="test",
         strategy_type="equal_weight",
+        strategy=EqualWeightStrategy(),
         portfolio=Portfolio(cash=1000.0, positions={}),
     )
     state.returns = [0.10, 0.20, 0.30]

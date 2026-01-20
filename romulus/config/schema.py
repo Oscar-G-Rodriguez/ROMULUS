@@ -51,6 +51,10 @@ class SuiteStrategyConfig(BaseModel):
     name: str = Field(description="Unique strategy name in suite")
     type: str = Field(description="Strategy type identifier (e.g., 'equal_weight')")
     params: Optional[dict] = Field(default=None, description="Optional strategy parameters")
+    param_grid: Optional[dict] = Field(
+        default=None,
+        description="Optional parameter grid for auto-expanding strategies",
+    )
 
 
 class WarmupConfig(BaseModel):

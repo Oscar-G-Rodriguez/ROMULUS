@@ -27,13 +27,17 @@ from romulus.config.schema import (
 def _build_sample_data(tickers, start: str, end: str) -> pd.DataFrame:
     trading_days = get_trading_days(start, end)
     index = pd.to_datetime(trading_days)
-    columns = pd.MultiIndex.from_product([tickers, ["Open", "Close"]])
+    columns = pd.MultiIndex.from_product([tickers, ["Open", "Close", "High", "Low", "Volume"]])
     data = pd.DataFrame(index=index, columns=columns, dtype=float)
 
     for i, _ in enumerate(index):
         for ticker in tickers:
-            data[(ticker, "Open")].iloc[i] = 100.0 + i
-            data[(ticker, "Close")].iloc[i] = 101.0 + i
+            open_price = 100.0 + i
+            data[(ticker, "Open")].iloc[i] = open_price
+            data[(ticker, "Close")].iloc[i] = open_price + 1.0
+            data[(ticker, "High")].iloc[i] = open_price + 2.0
+            data[(ticker, "Low")].iloc[i] = open_price - 1.0
+            data[(ticker, "Volume")].iloc[i] = 1_000_000 + i
 
     return data
 
@@ -48,7 +52,7 @@ def test_suite_runner_outputs_and_determinism(tmp_path, monkeypatch) -> None:
     universe_path = tmp_path / "universe.json"
     universe_path.write_text(json.dumps(universe), encoding="utf-8")
 
-    start_date = "2024-01-02"
+    start_date = "2023-10-02"
     end_date = "2024-01-18"
     tickers = ["SPY", "QQQ"]
     sample_data = _build_sample_data(tickers, start_date, end_date)
@@ -66,6 +70,16 @@ def test_suite_runner_outputs_and_determinism(tmp_path, monkeypatch) -> None:
         strategies=[
             SuiteStrategyConfig(name="equal_weight", type="equal_weight"),
             SuiteStrategyConfig(name="cash_only", type="cash_only"),
+            SuiteStrategyConfig(
+                name="ml_risk_adjusted",
+                type="ml_risk_adjusted",
+                params={
+                    "model_family": "ridge",
+                    "min_train_rows": 1,
+                    "train_window_days": 200,
+                    "device": "cpu",
+                },
+            ),
         ],
         execution=ExecutionConfig(min_order_notional=0.0),
         costs=CostConfig(),
@@ -93,6 +107,7 @@ def test_suite_runner_outputs_and_determinism(tmp_path, monkeypatch) -> None:
     expected_columns = {
         "decision_date",
         "strategy",
+        "score",
         "rolling_sharpe",
         "rolling_drawdown",
         "rolling_turnover",
@@ -106,3 +121,7 @@ def test_suite_runner_outputs_and_determinism(tmp_path, monkeypatch) -> None:
     assert lines
     first_entry = json.loads(lines[0])
     assert "selected_strategy" in first_entry
+    assert "leaderboard_ranks" in first_entry
+
+    forecasts_path = run_path / "forecasts.csv"
+    assert forecasts_path.exists()

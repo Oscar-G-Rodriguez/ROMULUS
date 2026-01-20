@@ -38,7 +38,7 @@ dev = [
 ]
 
 [project.scripts]
-romulus = "romulus.cli.main:run"
+romulus = "romulus.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

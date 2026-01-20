@@ -26,6 +26,22 @@ pip install -e ".[dev]"
 python -m romulus.cli.main run --config configs/etf_equal_weight.yaml
 ```
 
+Quickstart with defaults (CWD-aware resolver):
+
+```bash
+romulus run
+```
+
+Override config resolution:
+
+- Set `ROMULUS_CONFIG` to a config file path
+- Or pass `--config path/to/config.yaml`
+
+Pre-run edit wizard:
+
+- By default, `romulus run` prompts to edit key fields before running
+- Use `--no-edit` to skip the wizard
+
 ## Configuration
 
 ROMULUS is configured via YAML. Key sections include:

@@ -125,6 +125,18 @@ class ExecutionConfig(BaseModel):
         le=1,
         description="Percentage of portfolio to keep as cash buffer"
     )
+    max_weight: float = Field(
+        default=0.35,
+        ge=0,
+        le=1,
+        description="Maximum weight per ticker"
+    )
+    turnover_cap: float = Field(
+        default=0.35,
+        ge=0,
+        le=1,
+        description="Maximum turnover per rebalance"
+    )
 
 
 class CostConfig(BaseModel):

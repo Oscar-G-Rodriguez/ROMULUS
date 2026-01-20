@@ -47,6 +47,8 @@ class TestConfigLoading:
         assert config.execution.fractional_shares is True
         assert config.execution.min_order_notional == 1.0
         assert config.execution.cash_buffer_pct == 0.01
+        assert config.execution.max_weight == 0.35
+        assert config.execution.turnover_cap == 0.35
 
         # Verify cost settings
         assert config.costs.commission_per_trade == 0.0
@@ -178,6 +180,8 @@ class TestExecutionConfig:
         assert exec_config.fractional_shares is True
         assert exec_config.min_order_notional == 1.0
         assert exec_config.cash_buffer_pct == 0.01
+        assert exec_config.max_weight == 0.35
+        assert exec_config.turnover_cap == 0.35
 
     def test_cash_buffer_validation(self):
         """Test that cash buffer must be between 0 and 1."""

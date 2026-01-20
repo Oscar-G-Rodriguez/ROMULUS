@@ -17,6 +17,8 @@ execution:
   fractional_shares: true
   min_order_notional: 1.0
   cash_buffer_pct: 0.01
+  max_weight: 0.35
+  turnover_cap: 0.35
 
 costs:
   commission_per_trade: 0.0

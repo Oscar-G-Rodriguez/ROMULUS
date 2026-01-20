@@ -1,3 +1,3 @@
-"""ROMULUS Phase A - Deterministic ETF Backtesting Engine."""
+"""ROMULUS Phase B+ - Strategy suite backtesting with ML extensions."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

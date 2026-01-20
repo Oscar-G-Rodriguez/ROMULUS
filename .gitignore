@@ -3,6 +3,7 @@ data/cache/
 
 # Output runs (backtest results)
 outputs/runs/
+outputs/suite_runs/
 
 # Python bytecode
 __pycache__/

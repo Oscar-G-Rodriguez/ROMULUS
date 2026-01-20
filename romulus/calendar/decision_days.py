@@ -43,3 +43,23 @@ def get_next_trading_day(day: date, trading_days: List[date]) -> date:
         raise ValueError("No next trading day available")
 
     return trading_days[index + 1]
+
+
+def get_next_trading_day_safe(day: date, trading_days: List[date]) -> date | None:
+    """Return next trading day or None if unavailable."""
+    try:
+        return get_next_trading_day(day, trading_days)
+    except ValueError:
+        return None
+
+
+def compute_fill_date(
+    decision_date: date,
+    trading_days: List[date],
+    decision_time: str,
+    fill_time: str,
+) -> date | None:
+    """Compute fill date based on decision/fill times."""
+    if decision_time == "close" and fill_time == "open":
+        return get_next_trading_day_safe(decision_date, trading_days)
+    return decision_date

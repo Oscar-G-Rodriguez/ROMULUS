@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -11,7 +12,8 @@ from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
 
-from romulus.calendar.decision_days import generate_decision_calendar, get_next_trading_day
+from romulus.backtest.schedule import build_decision_schedule
+from romulus.calendar.decision_days import generate_decision_calendar
 from romulus.calendar.trading_days import get_trading_days
 from romulus.config.schema import SuiteConfig
 from romulus.data.ingestion import fetch_daily_data
@@ -19,20 +21,22 @@ from romulus.data.universe import Universe
 from romulus.portfolio.account import Portfolio
 from romulus.portfolio.fills import Fill, simulate_fills
 from romulus.portfolio.orders import Order, generate_orders
-from romulus.strategy.cash_only import CashOnlyStrategy
-from romulus.strategy.equal_weight import EqualWeightStrategy
+from romulus.strategy.constraints import apply_weight_constraints, compute_current_weights
+from romulus.strategy.registry import create_strategy, get_strategy_registry
 
 
 @dataclass
 class StrategyState:
     name: str
     strategy_type: str
+    strategy: object
     portfolio: Portfolio
     orders: List[Order] = field(default_factory=list)
     fills: List[Fill] = field(default_factory=list)
     trades: List[Dict[str, object]] = field(default_factory=list)
     decision_log: List[Dict[str, object]] = field(default_factory=list)
     portfolio_values: List[Dict[str, object]] = field(default_factory=list)
+    holdings: List[Dict[str, object]] = field(default_factory=list)
     returns: List[float] = field(default_factory=list)
     turnover: List[float] = field(default_factory=list)
     rolling_sharpe: List[Optional[float]] = field(default_factory=list)
@@ -41,6 +45,8 @@ class StrategyState:
     cash_pct: List[float] = field(default_factory=list)
     total_costs: float = 0.0
     total_gross: float = 0.0
+    forecasts: List[Dict[str, object]] = field(default_factory=list)
+    last_fill_value: Optional[float] = None
 
 
 def _cash_weight(target_weights: Dict[str, float]) -> float:
@@ -124,18 +130,11 @@ def _format_date(value: date) -> str:
     return value.isoformat()
 
 
-def _strategy_registry() -> Dict[str, object]:
-    return {
-        "equal_weight": EqualWeightStrategy,
-        "cash_only": CashOnlyStrategy,
-    }
-
-
 class SuiteRunner:
     """Runs a strategy suite with shadow portfolios and optional meta-selection."""
 
     def __init__(self) -> None:
-        self._registry = _strategy_registry()
+        self._registry = get_strategy_registry()
 
     def run(self, config: SuiteConfig) -> Dict[str, object]:
         start_time = datetime.now(timezone.utc)
@@ -152,8 +151,15 @@ class SuiteRunner:
         data_by_date = data.copy()
         data_by_date.index = data_by_date.index.date
 
+        warmup_start = config.warmup.start_date or config.backtest.start_date
+        backtest_start_date = date.fromisoformat(config.backtest.start_date)
+        warmup_start_date = date.fromisoformat(warmup_start)
+        calendar_start = config.backtest.start_date
+        if config.warmup.enabled and warmup_start_date < backtest_start_date:
+            calendar_start = warmup_start
+
         trading_days = get_trading_days(
-            config.backtest.start_date,
+            calendar_start,
             config.backtest.end_date,
         )
         decision_calendar = generate_decision_calendar(
@@ -165,10 +171,27 @@ class SuiteRunner:
         if not decision_calendar:
             raise ValueError("No decision dates available for suite run")
 
-        first_scored_decision = decision_calendar[0]
+        end_date = date.fromisoformat(config.backtest.end_date)
+        schedule, skipped = build_decision_schedule(
+            decision_calendar,
+            trading_days,
+            config.execution.decision_time,
+            config.execution.fill_time,
+            end_date,
+        )
+        if skipped is not None:
+            message = (
+                f"Skipping decision {skipped['decision_date']} because no fill date is available "
+                f"before end_date {config.backtest.end_date}."
+            )
+            print(message)
+
+        if not schedule:
+            raise ValueError("No decision dates available for suite run")
+
+        first_scored_decision = schedule[0]["decision_date"]
         warmup_decisions: List[date] = []
-        warmup_start = config.warmup.start_date or config.backtest.start_date
-        if config.warmup.enabled and warmup_start < config.backtest.start_date:
+        if config.warmup.enabled and warmup_start_date < backtest_start_date:
             warmup_end = (datetime.fromisoformat(config.backtest.start_date).date() - timedelta(days=1)).isoformat()
             warmup_decisions = generate_decision_calendar(
                 warmup_start,
@@ -181,7 +204,38 @@ class SuiteRunner:
         run_path = output_root / run_id
         run_path.mkdir(parents=True, exist_ok=True)
 
-        states = self._initialize_states(config)
+        strategy_specs = self._expand_strategy_specs(config.strategies)
+        states = self._initialize_states(strategy_specs, config)
+
+        decision_index_map = {
+            entry["decision_date"]: idx for idx, entry in enumerate(schedule)
+        }
+        decision_field = "Open" if config.execution.decision_time == "open" else "Close"
+        fill_field = "Open" if config.execution.fill_time == "open" else "Close"
+        context = {
+            "decision_schedule": schedule,
+            "decision_index_map": decision_index_map,
+            "universe": universe,
+            "data_by_date": data_by_date,
+            "costs": config.costs,
+            "fill_field": fill_field,
+        }
+        self._context = context
+        for state in states.values():
+            state.strategy.set_context(context)
+
+        skip_record: Optional[Dict[str, object]] = None
+        if skipped is not None:
+            skip_record = {
+                "decision_date": skipped["decision_date"].isoformat(),
+                "skipped": True,
+                "reason": skipped["reason"],
+                "message": (
+                    "Skipped final decision because fill date was unavailable before end_date."
+                ),
+            }
+            for state in states.values():
+                state.decision_log.append(dict(skip_record))
 
         warmup_weights: Dict[str, Dict[str, float]] = {}
         if config.warmup.enabled:
@@ -203,9 +257,9 @@ class SuiteRunner:
                 states=states,
                 warmup_weights=warmup_weights,
                 data_by_date=data_by_date,
-                trading_days=trading_days,
                 run_path=run_path,
                 decision_date=first_scored_decision,
+                fill_date=schedule[0]["fill_date"],
             )
 
         leaderboard_rows: List[Dict[str, object]] = []
@@ -213,7 +267,12 @@ class SuiteRunner:
         meta_decision_log: List[Dict[str, object]] = []
         meta_trades: List[Dict[str, object]] = []
 
-        for decision_index, decision_date in enumerate(decision_calendar):
+        if skip_record is not None and config.meta.enabled:
+            meta_decision_log.append(dict(skip_record))
+
+        for decision_index, entry in enumerate(schedule):
+            decision_date = entry["decision_date"]
+            fill_date = entry["fill_date"]
             eligible_tickers = universe.get_eligible_tickers(decision_date)
             if not eligible_tickers:
                 continue
@@ -234,6 +293,7 @@ class SuiteRunner:
                 row = {
                     "decision_date": _format_date(decision_date),
                     "strategy": name,
+                    "score": metrics["sharpe"],
                     "rolling_sharpe": metrics["sharpe"],
                     "rolling_drawdown": metrics["drawdown"],
                     "rolling_turnover": metrics["turnover"],
@@ -249,18 +309,35 @@ class SuiteRunner:
                 else:
                     selected_strategy_name = ranking["top"]
 
+            if decision_date not in data_by_date.index or fill_date not in data_by_date.index:
+                message = (
+                    f"Skipping decision {decision_date} because price data is missing for "
+                    f"decision or fill date."
+                )
+                print(message)
+                for state in states.values():
+                    state.decision_log.append(
+                        {
+                            "decision_date": decision_date.isoformat(),
+                            "skipped": True,
+                            "reason": "missing_price_data",
+                            "message": message,
+                        }
+                    )
+                break
+
             decision_prices = self._get_prices(
                 data_by_date,
                 decision_date,
                 eligible_tickers,
-                "Close",
+                decision_field,
             )
             eligible_with_prices = [t for t in eligible_tickers if t in decision_prices]
             if not eligible_with_prices:
                 continue
 
             for state in states.values():
-                target_weights = self._compute_target_weights(
+                raw_weights = self._compute_target_weights(
                     config=config,
                     state=state,
                     decision_date=decision_date,
@@ -273,11 +350,12 @@ class SuiteRunner:
                     config=config,
                     state=state,
                     decision_date=decision_date,
+                    fill_date=fill_date,
                     decision_prices=decision_prices,
                     eligible_tickers=eligible_with_prices,
                     data_by_date=data_by_date,
-                    trading_days=trading_days,
-                    target_weights=target_weights,
+                    fill_field=fill_field,
+                    raw_weights=raw_weights,
                     initialization=False,
                 )
 
@@ -292,7 +370,7 @@ class SuiteRunner:
                         config=config,
                         state=states[next(iter(states))],
                         decision_date=decision_date,
-                        eligible_tickers=eligible_tickers,
+                        eligible_tickers=eligible_with_prices,
                         data_by_date=data_by_date,
                         override_weights=None,
                         strategy_override=selected_strategy_name,
@@ -303,11 +381,12 @@ class SuiteRunner:
                         config=config,
                         portfolio=meta_portfolio,
                         decision_date=decision_date,
+                        fill_date=fill_date,
                         decision_prices=decision_prices,
                         eligible_tickers=eligible_with_prices,
                         data_by_date=data_by_date,
-                        trading_days=trading_days,
-                        target_weights=selected_weights,
+                        fill_field=fill_field,
+                        raw_weights=selected_weights,
                         selected_strategy=selected_strategy_name,
                         leaderboard_snapshot=ranking,
                         decision_log=meta_decision_log,
@@ -333,6 +412,17 @@ class SuiteRunner:
 
         self._write_strategy_artifacts(states, run_path)
 
+        forecast_rows: List[Dict[str, object]] = []
+        for state in states.values():
+            if not state.forecasts:
+                continue
+            for row in state.forecasts:
+                enriched = dict(row)
+                enriched["strategy"] = state.name
+                forecast_rows.append(enriched)
+        if forecast_rows:
+            pd.DataFrame(forecast_rows).to_csv(run_path / "forecasts.csv", index=False)
+
         manifest = {
             "run_id": run_id,
             "config_hash": self._hash_config(config),
@@ -350,20 +440,44 @@ class SuiteRunner:
             "leaderboard_hash": _hash_dataframe(leaderboard_df),
         }
 
-    def _initialize_states(self, config: SuiteConfig) -> Dict[str, StrategyState]:
+    def _initialize_states(self, strategy_specs: List[dict], config: SuiteConfig) -> Dict[str, StrategyState]:
         states: Dict[str, StrategyState] = {}
-        for strat in config.strategies:
-            if strat.type not in self._registry:
-                raise ValueError(f"Unknown strategy type: {strat.type}")
-            if strat.name in states:
-                raise ValueError(f"Duplicate strategy name: {strat.name}")
+        for strat in strategy_specs:
+            strat_type = strat["type"]
+            strat_name = strat["name"]
+            if strat_type not in self._registry:
+                raise ValueError(f"Unknown strategy type: {strat_type}")
+            if strat_name in states:
+                raise ValueError(f"Duplicate strategy name: {strat_name}")
             portfolio = Portfolio(cash=config.backtest.initial_cash, positions={})
-            states[strat.name] = StrategyState(
-                name=strat.name,
-                strategy_type=strat.type,
+            strategy = create_strategy(strat_type, strat.get("params"))
+            states[strat_name] = StrategyState(
+                name=strat_name,
+                strategy_type=strat_type,
+                strategy=strategy,
                 portfolio=portfolio,
             )
         return states
+
+    def _expand_strategy_specs(self, strategies: List[object]) -> List[dict]:
+        expanded: List[dict] = []
+        for strat in strategies:
+            base_params = strat.params or {}
+            param_grid = strat.param_grid or {}
+            if not param_grid:
+                expanded.append({"name": strat.name, "type": strat.type, "params": base_params})
+                continue
+
+            keys = list(param_grid.keys())
+            values_list = [param_grid[key] for key in keys]
+            for values in itertools.product(*values_list):
+                params = dict(base_params)
+                for key, value in zip(keys, values):
+                    params[key] = value
+                suffix = "_".join(f"{key}={value}" for key, value in zip(keys, values))
+                name = f"{strat.name}_{suffix}"
+                expanded.append({"name": name, "type": strat.type, "params": params})
+        return expanded
 
     def _run_warmup(
         self,
@@ -377,12 +491,29 @@ class SuiteRunner:
         universe: Universe,
     ) -> Dict[str, Dict[str, float]]:
         warmup_weights: Dict[str, Dict[str, float]] = {}
+        decision_field = "Open" if config.execution.decision_time == "open" else "Close"
+        fill_field = "Open" if config.execution.fill_time == "open" else "Close"
+        warmup_schedule: List[dict] = []
+        if decisions:
+            warmup_schedule, _ = build_decision_schedule(
+                decisions,
+                trading_days,
+                config.execution.decision_time,
+                config.execution.fill_time,
+                first_scored_decision,
+            )
+
         for state in states.values():
             warmup_portfolio = Portfolio(cash=config.backtest.initial_cash, positions={})
-            if decisions:
-                for decision_date in decisions:
+            if warmup_schedule:
+                for entry in warmup_schedule:
+                    decision_date = entry["decision_date"]
+                    fill_date = entry["fill_date"]
                     eligible = universe.get_eligible_tickers(decision_date)
-                    target_weights = self._compute_target_weights(
+                    if decision_date not in data_by_date.index or fill_date not in data_by_date.index:
+                        continue
+
+                    raw_weights = self._compute_target_weights(
                         config=config,
                         state=state,
                         decision_date=decision_date,
@@ -395,15 +526,37 @@ class SuiteRunner:
                         data_by_date,
                         decision_date,
                         eligible,
-                        "Close",
+                        decision_field,
                     )
-                    fill_date = get_next_trading_day(decision_date, trading_days)
+                    if not decision_prices:
+                        continue
+
+                    current_weights = compute_current_weights(
+                        warmup_portfolio.positions,
+                        warmup_portfolio.cash,
+                        decision_prices,
+                    )
+                    target_weights, _ = apply_weight_constraints(
+                        raw_weights,
+                        current_weights,
+                        config.execution.max_weight,
+                        config.execution.turnover_cap,
+                    )
+                    target_weights = {
+                        ticker: weight
+                        for ticker, weight in target_weights.items()
+                        if ticker in decision_prices
+                    }
+
                     fill_prices = self._get_prices(
                         data_by_date,
                         fill_date,
                         eligible,
-                        "Open",
+                        fill_field,
                     )
+                    if not fill_prices:
+                        continue
+
                     orders = generate_orders(
                         target_weights=target_weights,
                         current_positions=warmup_portfolio.positions,
@@ -427,7 +580,7 @@ class SuiteRunner:
                 data_by_date,
                 first_scored_decision,
                 universe.get_eligible_tickers(first_scored_decision),
-                "Close",
+                decision_field,
             )
             total_value = warmup_portfolio.get_total_value(decision_prices)
             weights = {}
@@ -462,15 +615,16 @@ class SuiteRunner:
         states: Dict[str, StrategyState],
         warmup_weights: Dict[str, Dict[str, float]],
         data_by_date: pd.DataFrame,
-        trading_days: List[date],
         run_path: Path,
         decision_date: date,
+        fill_date: date,
     ) -> Dict[str, List[Dict[str, object]]]:
         init_trades: Dict[str, List[Dict[str, object]]] = {}
         eligible = list(data_by_date.columns.get_level_values(0).unique())
-        decision_prices = self._get_prices(data_by_date, decision_date, eligible, "Close")
-        fill_date = get_next_trading_day(decision_date, trading_days)
-        fill_prices = self._get_prices(data_by_date, fill_date, eligible, "Open")
+        decision_field = "Open" if config.execution.decision_time == "open" else "Close"
+        fill_field = "Open" if config.execution.fill_time == "open" else "Close"
+        decision_prices = self._get_prices(data_by_date, decision_date, eligible, decision_field)
+        fill_prices = self._get_prices(data_by_date, fill_date, eligible, fill_field)
 
         for state in states.values():
             state.portfolio = Portfolio(cash=config.backtest.initial_cash, positions={})
@@ -479,6 +633,20 @@ class SuiteRunner:
                 k: v
                 for k, v in weights.items()
                 if k != "cash_weight" and k in decision_prices
+            }
+            current_weights = compute_current_weights(
+                state.portfolio.positions,
+                state.portfolio.cash,
+                decision_prices,
+            )
+            target_weights, _ = apply_weight_constraints(
+                target_weights,
+                current_weights,
+                config.execution.max_weight,
+                config.execution.turnover_cap,
+            )
+            target_weights = {
+                ticker: weight for ticker, weight in target_weights.items() if ticker in decision_prices
             }
 
             orders = generate_orders(
@@ -528,7 +696,12 @@ class SuiteRunner:
             return override_weights
 
         strategy_type = strategy_override or state.strategy_type
-        strategy = self._registry[strategy_type]()
+        if strategy_override is None:
+            strategy = state.strategy
+        else:
+            strategy = create_strategy(strategy_type, None)
+            if getattr(self, "_context", None) is not None:
+                strategy.set_context(self._context)
         price_history = data_by_date.loc[:decision_date]
         portfolio = portfolio_override or state.portfolio
 
@@ -560,14 +733,30 @@ class SuiteRunner:
         config: SuiteConfig,
         state: StrategyState,
         decision_date: date,
+        fill_date: date,
         decision_prices: Dict[str, float],
         eligible_tickers: List[str],
         data_by_date: pd.DataFrame,
-        trading_days: List[date],
-        target_weights: Dict[str, float],
+        fill_field: str,
+        raw_weights: Dict[str, float],
         initialization: bool,
     ) -> None:
         total_value_before = state.portfolio.get_total_value(decision_prices)
+        current_weights = compute_current_weights(
+            state.portfolio.positions,
+            state.portfolio.cash,
+            decision_prices,
+        )
+        target_weights, constraint_info = apply_weight_constraints(
+            raw_weights,
+            current_weights,
+            config.execution.max_weight,
+            config.execution.turnover_cap,
+        )
+        target_weights = {
+            ticker: weight for ticker, weight in target_weights.items() if ticker in decision_prices
+        }
+
         orders = generate_orders(
             target_weights=target_weights,
             current_positions=state.portfolio.positions,
@@ -578,8 +767,14 @@ class SuiteRunner:
             cash_buffer_pct=config.execution.cash_buffer_pct,
             decision_date=decision_date,
         )
-        fill_date = get_next_trading_day(decision_date, trading_days)
-        fill_prices = self._get_prices(data_by_date, fill_date, eligible_tickers, "Open")
+        fill_prices = self._get_prices(data_by_date, fill_date, eligible_tickers, fill_field)
+        if not fill_prices:
+            return
+
+        pre_trade_value = state.portfolio.get_total_value(fill_prices)
+        if state.last_fill_value is not None and state.last_fill_value > 0:
+            interval_return = (pre_trade_value - state.last_fill_value) / state.last_fill_value
+            state.returns.append(interval_return)
         fills = simulate_fills(
             orders,
             fill_prices=fill_prices,
@@ -594,18 +789,15 @@ class SuiteRunner:
 
         state.portfolio.apply_fills(fills)
         total_value_after = state.portfolio.get_total_value(fill_prices)
+        state.last_fill_value = total_value_after
 
         trade_records = [self._fill_to_trade(fill, decision_date, initialization) for fill in fills]
         state.trades.extend(trade_records)
         state.orders.extend(orders)
         state.fills.extend(fills)
 
-        trade_notional = sum(fill.gross_value for fill in fills)
-        turnover = trade_notional / total_value_before if total_value_before > 0 else 0.0
+        turnover = constraint_info.get("turnover_post", 0.0)
         state.turnover.append(turnover)
-        state.returns.append(
-            (total_value_after - total_value_before) / total_value_before if total_value_before > 0 else 0.0
-        )
 
         state.cash_pct.append(
             state.portfolio.cash / total_value_after if total_value_after > 0 else 1.0
@@ -614,6 +806,9 @@ class SuiteRunner:
         state.portfolio_values.append(
             {"date": fill_date, "total_value": total_value_after}
         )
+        holdings_snapshot = {"date": _format_date(fill_date), "cash": state.portfolio.cash}
+        holdings_snapshot.update(state.portfolio.positions)
+        state.holdings.append(holdings_snapshot)
 
         metrics = _rolling_metrics(
             state.returns,
@@ -630,32 +825,57 @@ class SuiteRunner:
                 "decision_date": _format_date(decision_date),
                 "fill_date": _format_date(fill_date),
                 "eligible_tickers": eligible_tickers,
+                "raw_target_weights": raw_weights,
                 "target_weights": target_weights,
-                "cash_weight": _cash_weight(target_weights),
+                "cash_weight": constraint_info.get("cash_weight", _cash_weight(target_weights)),
                 "portfolio_value_before": total_value_before,
+                "portfolio_value_pre_trade": pre_trade_value,
                 "portfolio_value_after": total_value_after,
-                "turnover": turnover,
+                "turnover_pre": constraint_info.get("turnover_pre"),
+                "turnover_post": constraint_info.get("turnover_post"),
+                "turnover_scale_factor": constraint_info.get("scale_factor"),
                 "rolling_sharpe": metrics["sharpe"],
                 "rolling_drawdown": metrics["drawdown"],
                 "rolling_turnover": metrics["turnover"],
+                "signals": state.strategy.get_last_signals(),
+                "training_info": state.strategy.get_last_training_info(),
             }
         )
+
+        forecasts = state.strategy.get_last_forecasts()
+        if forecasts:
+            state.forecasts.extend(forecasts)
 
     def _process_meta_decision(
         self,
         config: SuiteConfig,
         portfolio: Portfolio,
         decision_date: date,
+        fill_date: date,
         decision_prices: Dict[str, float],
         eligible_tickers: List[str],
         data_by_date: pd.DataFrame,
-        trading_days: List[date],
-        target_weights: Dict[str, float],
+        fill_field: str,
+        raw_weights: Dict[str, float],
         selected_strategy: str,
         leaderboard_snapshot: Dict[str, object],
         decision_log: List[Dict[str, object]],
     ) -> List[Dict[str, object]]:
         total_value_before = portfolio.get_total_value(decision_prices)
+        current_weights = compute_current_weights(
+            portfolio.positions,
+            portfolio.cash,
+            decision_prices,
+        )
+        target_weights, constraint_info = apply_weight_constraints(
+            raw_weights,
+            current_weights,
+            config.execution.max_weight,
+            config.execution.turnover_cap,
+        )
+        target_weights = {
+            ticker: weight for ticker, weight in target_weights.items() if ticker in decision_prices
+        }
         orders = generate_orders(
             target_weights=target_weights,
             current_positions=portfolio.positions,
@@ -666,8 +886,9 @@ class SuiteRunner:
             cash_buffer_pct=config.execution.cash_buffer_pct,
             decision_date=decision_date,
         )
-        fill_date = get_next_trading_day(decision_date, trading_days)
-        fill_prices = self._get_prices(data_by_date, fill_date, eligible_tickers, "Open")
+        fill_prices = self._get_prices(data_by_date, fill_date, eligible_tickers, fill_field)
+        if not fill_prices:
+            return []
         fills = simulate_fills(
             orders,
             fill_prices=fill_prices,
@@ -685,11 +906,14 @@ class SuiteRunner:
                 "decision_date": _format_date(decision_date),
                 "fill_date": _format_date(fill_date),
                 "selected_strategy": selected_strategy,
+                "raw_target_weights": raw_weights,
                 "target_weights": target_weights,
+                "cash_weight": constraint_info.get("cash_weight", _cash_weight(target_weights)),
                 "portfolio_value_before": total_value_before,
                 "portfolio_value_after": total_value_after,
                 "leaderboard_top": leaderboard_snapshot.get("top"),
                 "leaderboard_ranks": leaderboard_snapshot.get("ranks"),
+                "leaderboard_eligibility": leaderboard_snapshot.get("eligibility"),
             }
         )
 
@@ -774,7 +998,16 @@ class SuiteRunner:
                 strategy_path / "trades.csv",
                 index=False,
             )
+            pd.DataFrame(state.holdings).to_csv(
+                strategy_path / "holdings.csv",
+                index=False,
+            )
             _write_jsonl(strategy_path / "decision_log.jsonl", state.decision_log)
+            if state.forecasts:
+                pd.DataFrame(state.forecasts).to_csv(
+                    strategy_path / "forecasts.csv",
+                    index=False,
+                )
 
     def _build_reliability_report(
         self,

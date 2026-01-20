@@ -9,7 +9,8 @@ import pandas as pd
 import pytest
 
 from romulus.backtest.engine import BacktestEngine
-from romulus.calendar.decision_days import generate_decision_calendar, get_next_trading_day
+from romulus.backtest.schedule import build_decision_schedule
+from romulus.calendar.decision_days import generate_decision_calendar
 from romulus.calendar.trading_days import get_trading_days
 from romulus.config.schema import (
     BacktestConfig,
@@ -107,8 +108,23 @@ def test_no_lookahead(tmp_path, monkeypatch) -> None:
             target = eligible_tickers[as_of_date.day % len(eligible_tickers)]
             return {ticker: (1.0 if ticker == target else 0.0) for ticker in eligible_tickers}
 
+        def set_context(self, context):
+            return None
+
+        def get_last_signals(self):
+            return {}
+
+        def get_last_training_info(self):
+            return {}
+
+        def get_last_forecasts(self):
+            return []
+
+    monkeypatch.setattr(
+        "romulus.backtest.engine.create_strategy",
+        lambda *args, **kwargs: LookaheadStrategy(),
+    )
     engine = BacktestEngine()
-    engine._strategy_map["lookahead"] = LookaheadStrategy
 
     config = _build_config(tmp_path, universe_path, start_date, end_date, "lookahead")
     result = engine.run(config)
@@ -119,7 +135,14 @@ def test_no_lookahead(tmp_path, monkeypatch) -> None:
 
     decision_calendar = generate_decision_calendar(start_date, end_date)
     trading_days = get_trading_days(start_date, end_date)
-    expected_fill_dates = [get_next_trading_day(day, trading_days) for day in decision_calendar]
+    schedule, _ = build_decision_schedule(
+        decision_calendar,
+        trading_days,
+        "close",
+        "open",
+        pd.to_datetime(end_date).date(),
+    )
+    expected_fill_dates = [entry["fill_date"] for entry in schedule]
 
     fill_dates = pd.to_datetime(fills["fill_date"]).dt.date
     assert set(fill_dates) == set(expected_fill_dates)

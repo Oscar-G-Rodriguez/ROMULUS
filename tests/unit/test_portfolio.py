@@ -31,6 +31,27 @@ def test_cash_accounting() -> None:
     assert portfolio.cash == 895.0
 
 
+def test_cash_accounting_sell_fees() -> None:
+    portfolio = Portfolio(cash=1000.0, positions={"SPY": 1.0})
+    fills = [
+        Fill(
+            ticker="SPY",
+            shares=-1.0,
+            fill_price=100.0,
+            fill_date=date(2024, 1, 2),
+            commission=1.0,
+            slippage_cost=2.0,
+            gross_value=100.0,
+            net_cost=103.0,
+        )
+    ]
+
+    portfolio.apply_fills(fills)
+
+    assert portfolio.cash == 1097.0
+    assert portfolio.positions["SPY"] == 0.0
+
+
 def test_fractional_shares() -> None:
     portfolio = Portfolio(cash=500.0, positions={})
     fills = [

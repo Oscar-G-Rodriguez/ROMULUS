@@ -10,7 +10,7 @@ import pandas as pd
 from romulus.config.schema import CostConfig
 from romulus.data.universe import Universe, UniverseEntry
 from romulus.strategy import ml as ml_module
-from romulus.strategy.ml import FEATURE_NAMES, MLReturnStrategy
+from romulus.strategy.ml import BASE_FEATURE_NAMES, MLReturnStrategy
 
 
 def test_ml_training_rows_require_full_interval(monkeypatch) -> None:
@@ -33,13 +33,13 @@ def test_ml_training_rows_require_full_interval(monkeypatch) -> None:
 
     universe = Universe([UniverseEntry(ticker="SPY", name="SPY", inception_date=date(2000, 1, 1))])
 
-    monkeypatch.setattr(
-        ml_module,
-        "_compute_features",
-        lambda prices, ticker, as_of: np.zeros(len(FEATURE_NAMES)),
+    strategy = MLReturnStrategy(
+        model_family="ridge",
+        min_train_rows=1,
+        train_window_days=1000,
+        device="cpu",
+        embargo_intervals=0,
     )
-
-    strategy = MLReturnStrategy(model_family="ridge", min_train_rows=1, train_window_days=1000, device="cpu")
     strategy.set_context(
         {
             "decision_schedule": schedule,
@@ -50,9 +50,15 @@ def test_ml_training_rows_require_full_interval(monkeypatch) -> None:
         }
     )
 
-    rows = strategy._build_training_rows(date(2024, 1, 5))
+    monkeypatch.setattr(
+        strategy,
+        "_compute_feature_vector",
+        lambda prices, ticker, as_of: np.zeros(len(BASE_FEATURE_NAMES)),
+    )
+
+    rows = strategy._build_training_rows(1, date(2024, 1, 5))
     assert rows == []
 
-    rows_late = strategy._build_training_rows(date(2024, 1, 9))
+    rows_late = strategy._build_training_rows(1, date(2024, 1, 9))
     assert len(rows_late) == 1
     assert rows_late[0][0] == date(2024, 1, 3)

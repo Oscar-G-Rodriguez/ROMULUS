@@ -40,6 +40,8 @@ venv/
 ENV/
 env/
 .env
+.pip-tmp/
+.tmp/
 
 # IDE
 .idea/

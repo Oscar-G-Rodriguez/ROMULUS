@@ -12,6 +12,7 @@ from typing import Dict, List
 import pandas as pd
 
 from romulus.backtest.metrics import compute_metrics
+from romulus.backtest.progress import ProgressTracker
 from romulus.backtest.schedule import build_decision_schedule
 from romulus.calendar.decision_days import generate_decision_calendar
 from romulus.calendar.trading_days import get_trading_days
@@ -74,6 +75,12 @@ class BacktestEngine:
             config.execution.decision_time,
             config.execution.fill_time,
             end_date,
+        )
+
+        progress = ProgressTracker(
+            start_date=date.fromisoformat(config.backtest.start_date),
+            end_date=end_date,
+            label="Run",
         )
 
         if skipped is not None:
@@ -221,7 +228,7 @@ class BacktestEngine:
             portfolio_value_history.append(
                 {"date": fill_date, "total_value": portfolio_value}
             )
-
+            progress.update(fill_date)
             decision_log.append(
                 {
                     "decision_date": decision_date.isoformat(),
@@ -245,6 +252,8 @@ class BacktestEngine:
             forecasts = strategy.get_last_forecasts()
             if forecasts:
                 forecasts_list.extend(forecasts)
+
+        progress.finish()
 
         portfolio_value_df = pd.DataFrame(portfolio_value_history)
         if not portfolio_value_df.empty:

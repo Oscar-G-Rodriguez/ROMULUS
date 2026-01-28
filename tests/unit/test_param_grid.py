@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from romulus.backtest.suite import SuiteRunner
-from romulus.config.schema import SuiteStrategyConfig
+from romulus.config.schema import MLConfig, SuiteStrategyConfig
 
 
 def test_param_grid_expansion_is_deterministic() -> None:
@@ -20,7 +20,7 @@ def test_param_grid_expansion_is_deterministic() -> None:
         )
     ]
 
-    expanded = runner._expand_strategy_specs(strategies)
+    expanded = runner._expand_strategy_specs(strategies, MLConfig())
     names = [spec["name"] for spec in expanded]
 
     assert names == [

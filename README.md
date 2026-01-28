@@ -4,6 +4,27 @@ ROMULUS is a deterministic ETF basket backtesting engine built around Wednesday/
 
 ## Install
 
+Single-file installer (recommended):
+
+```bash
+cd /path/to/ROMULUS
+python install.py
+```
+
+Add `--ml` to include XGBoost:
+
+```bash
+python install.py --ml
+```
+
+Global install with pipx (no venv activation needed):
+
+```bash
+python install.py --pipx
+```
+
+Manual install:
+
 ```bash
 python -m venv venv
 venv\Scripts\activate
@@ -52,6 +73,16 @@ Outputs will be saved under: outputs\runs
 
 Outputs live under `outputs/runs/{run_id}` for single runs and `outputs/suite_runs/{run_id}` for suites.
 
+## Desktop UI (no browser)
+
+ROMULUS ships a standalone desktop UI (Tkinter, no localhost). Launch it with:
+
+```bash
+romulus ui
+```
+
+The UI lets you run backtests/suites, view logs and progress, and scroll through all runs with details.
+
 ## Configuration
 
 ROMULUS supports two config types:
@@ -86,6 +117,26 @@ Key knobs:
 ## ML strategies
 
 ROMULUS ships ML strategies (ridge or XGBoost) that use only OHLCV features and strict as-of alignment. Enable XGBoost by installing the ML extra and set `model_family: "xgboost"` in the strategy params. GPU training is supported via `device: "cuda"` or `device: "auto"`; `auto` will fall back to CPU if CUDA is unavailable. For deterministic runs and tests, keep `device: "cpu"`.
+
+Expanded ML (suite-level) can add macro + alt features and test multiple walk-forward windows. In `configs/suite_default.yaml`:
+
+```yaml
+ml:
+  expanded: true
+  rolling_windows: [252, 504, 756]
+  expanding: true
+  embargo_intervals: 1
+  macro_enabled: true
+  alt_enabled: true
+```
+
+Macro features use Nasdaq Data Link (Quandl). Set the API key as an environment variable:
+
+```
+NASDAQ_DATA_LINK_API_KEY=your_key_here
+```
+
+Alt features use pytrends (no key required, rate-limited; cached on disk).
 
 ## Artifacts
 

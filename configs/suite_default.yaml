@@ -62,3 +62,12 @@ meta:
   enabled: false
   min_periods_before_selection: 4
   baseline_strategy: "equal_weight"
+
+ml:
+  expanded: false
+  rolling_windows: [252, 504, 756]
+  expanding: true
+  embargo_intervals: 1
+  macro_enabled: true
+  alt_enabled: true
+  alt_sleep_seconds: 1.0

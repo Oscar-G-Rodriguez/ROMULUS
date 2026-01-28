@@ -72,6 +72,10 @@ class Universe:
         """Return all tickers in the universe."""
         return [entry.ticker for entry in self._entries]
 
+    def get_entries(self) -> List[UniverseEntry]:
+        """Return all universe entries."""
+        return list(self._entries)
+
     def get_inception_date(self, ticker: str) -> date:
         """Return the inception date for a ticker."""
         if ticker not in self._by_ticker:

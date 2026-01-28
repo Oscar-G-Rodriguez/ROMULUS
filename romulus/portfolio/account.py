@@ -27,6 +27,9 @@ class Portfolio:
     def apply_fills(self, fills: List["Fill"]) -> None:
         """Apply fills to update cash and positions."""
         for fill in fills:
-            direction = 1 if fill.shares > 0 else -1
-            self.cash -= direction * fill.net_cost
+            fees = fill.commission + fill.slippage_cost
+            if fill.shares > 0:
+                self.cash -= fill.gross_value + fees
+            else:
+                self.cash += fill.gross_value - fees
             self.positions[fill.ticker] = self.positions.get(fill.ticker, 0.0) + fill.shares

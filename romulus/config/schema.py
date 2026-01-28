@@ -99,6 +99,32 @@ class MetaConfig(BaseModel):
     )
 
 
+class MLConfig(BaseModel):
+    """Configuration for expanded ML features in suite runs."""
+
+    expanded: bool = Field(default=False, description="Enable expanded ML features")
+    rolling_windows: List[int] = Field(
+        default_factory=lambda: [252, 504, 756],
+        description="Training window lengths in trading days for rolling runs",
+    )
+    expanding: bool = Field(default=True, description="Include expanding-window ML variants")
+    embargo_intervals: int = Field(
+        default=1,
+        ge=0,
+        description="Number of recent intervals to embargo from training",
+    )
+    macro_enabled: bool = Field(default=True, description="Enable macro features from Nasdaq Data Link")
+    macro_series: Optional[List[str]] = Field(
+        default=None,
+        description="Optional Nasdaq Data Link series codes (e.g., FRED/GDP)",
+    )
+    alt_enabled: bool = Field(default=True, description="Enable alt features from pytrends")
+    alt_sleep_seconds: float = Field(
+        default=1.0,
+        ge=0,
+        description="Seconds to sleep between pytrends requests",
+    )
+
 class ExecutionConfig(BaseModel):
     """Configuration for order execution."""
 
@@ -223,6 +249,7 @@ class SuiteConfig(BaseModel):
     warmup: WarmupConfig = Field(default_factory=WarmupConfig)
     leaderboard: LeaderboardConfig = Field(default_factory=LeaderboardConfig)
     meta: MetaConfig = Field(default_factory=MetaConfig)
+    ml: MLConfig = Field(default_factory=MLConfig)
 
 
 def load_config(path: str) -> BacktestConfig:

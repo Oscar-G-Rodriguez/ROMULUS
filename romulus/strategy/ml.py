@@ -13,7 +13,7 @@ import pandas as pd
 from romulus.strategy.base import BaseStrategy
 
 
-FEATURE_NAMES = [
+BASE_FEATURE_NAMES = [
     "ret_5",
     "ret_10",
     "ret_21",
@@ -27,9 +27,18 @@ FEATURE_NAMES = [
     "vol_z_63",
 ]
 
+EXPANDED_FEATURE_NAMES = [
+    "ret_126",
+    "vol_126",
+    "ma_ratio_126",
+    "rsi_14",
+    "rsi_63",
+    "trend_slope_63",
+]
 
-def _feature_hash() -> str:
-    payload = "|".join(FEATURE_NAMES).encode("utf-8")
+
+def _feature_hash(feature_names: List[str]) -> str:
+    payload = "|".join(feature_names).encode("utf-8")
     return hashlib.md5(payload).hexdigest()
 
 
@@ -37,7 +46,31 @@ def _get_series(prices: pd.DataFrame, ticker: str, field: str) -> pd.Series:
     return prices[(ticker, field)].dropna()
 
 
-def _compute_features(prices: pd.DataFrame, ticker: str, as_of: date) -> Optional[np.ndarray]:
+def _rsi(series: pd.Series, window: int) -> Optional[float]:
+    if len(series) < window + 1:
+        return None
+    delta = series.diff().dropna()
+    gain = delta.where(delta > 0, 0.0).tail(window).mean()
+    loss = -delta.where(delta < 0, 0.0).tail(window).mean()
+    if loss == 0:
+        return 100.0
+    rs = gain / loss
+    return float(100 - (100 / (1 + rs)))
+
+
+def _trend_slope(series: pd.Series, window: int) -> Optional[float]:
+    if len(series) < window:
+        return None
+    values = series.tail(window).astype(float)
+    if values.min() <= 0:
+        return None
+    log_prices = np.log(values)
+    x = np.arange(len(log_prices))
+    slope = np.polyfit(x, log_prices, 1)[0]
+    return float(slope)
+
+
+def _compute_base_features(prices: pd.DataFrame, ticker: str, as_of: date) -> Optional[List[float]]:
     try:
         close = _get_series(prices, ticker, "Close").loc[:as_of]
         high = _get_series(prices, ticker, "High").loc[:as_of]
@@ -73,23 +106,44 @@ def _compute_features(prices: pd.DataFrame, ticker: str, as_of: date) -> Optiona
     vol_std = float(volume.tail(63).std())
     vol_z = float((volume.iloc[-1] - vol_mean) / vol_std) if vol_std else 0.0
 
-    features = np.array(
-        [
-            ret_n(5),
-            ret_n(10),
-            ret_n(21),
-            ret_n(63),
-            vol_21,
-            vol_63,
-            drawdown,
-            ma_ratio_21,
-            ma_ratio_63,
-            atr_proxy,
-            vol_z,
-        ],
-        dtype=float,
-    )
-    if np.any(np.isnan(features)):
+    features = [
+        ret_n(5),
+        ret_n(10),
+        ret_n(21),
+        ret_n(63),
+        vol_21,
+        vol_63,
+        drawdown,
+        ma_ratio_21,
+        ma_ratio_63,
+        atr_proxy,
+        vol_z,
+    ]
+    if any(pd.isna(value) for value in features):
+        return None
+    return features
+
+
+def _compute_expanded_features(prices: pd.DataFrame, ticker: str, as_of: date) -> Optional[List[float]]:
+    try:
+        close = _get_series(prices, ticker, "Close").loc[:as_of]
+    except KeyError:
+        return None
+
+    if len(close) < 127:
+        return None
+
+    returns = close.pct_change().dropna()
+    vol_126 = float(returns.tail(126).std())
+    ma_126 = float(close.tail(126).mean())
+    ma_ratio_126 = float(close.iloc[-1] / ma_126) if ma_126 else 0.0
+    ret_126 = float(close.iloc[-1] / close.iloc[-127] - 1)
+    rsi_14 = _rsi(close, 14)
+    rsi_63 = _rsi(close, 63)
+    slope_63 = _trend_slope(close, 63)
+
+    features = [ret_126, vol_126, ma_ratio_126, rsi_14, rsi_63, slope_63]
+    if any(value is None or pd.isna(value) for value in features):
         return None
     return features
 
@@ -122,6 +176,65 @@ def _interval_vol(prices: pd.DataFrame, ticker: str, start: date, end: date) -> 
     if returns.empty:
         return None
     return float(returns.std())
+
+
+def _macro_feature_values(
+    macro_df: Optional[pd.DataFrame],
+    as_of: date,
+    columns: List[str],
+) -> List[float]:
+    values: List[float] = []
+    if macro_df is None or macro_df.empty:
+        return values
+    for col in columns:
+        if col not in macro_df.columns:
+            values.extend([0.0, 0.0, 0.0])
+            continue
+        series = macro_df[col].dropna()
+        series = series.loc[:as_of]
+        if series.empty:
+            values.extend([0.0, 0.0, 0.0])
+            continue
+        current = float(series.iloc[-1])
+        change_21 = 0.0
+        change_63 = 0.0
+        if len(series) > 21:
+            prior = float(series.iloc[-22])
+            change_21 = (current / prior - 1) if prior else 0.0
+        if len(series) > 63:
+            prior = float(series.iloc[-64])
+            change_63 = (current / prior - 1) if prior else 0.0
+        values.extend([current, change_21, change_63])
+    return values
+
+
+def _alt_feature_values(
+    alt_df: Optional[pd.DataFrame],
+    as_of: date,
+    keywords: List[str],
+) -> List[float]:
+    values: List[float] = []
+    if alt_df is None or alt_df.empty:
+        return values
+    for keyword in keywords:
+        if keyword not in alt_df.columns:
+            values.extend([0.0, 0.0, 0.0])
+            continue
+        series = alt_df[keyword].dropna().loc[:as_of]
+        if series.empty:
+            values.extend([0.0, 0.0, 0.0])
+            continue
+        current = float(series.iloc[-1])
+        change_28 = 0.0
+        change_84 = 0.0
+        if len(series) > 28:
+            prior = float(series.iloc[-29])
+            change_28 = (current / prior - 1) if prior else 0.0
+        if len(series) > 84:
+            prior = float(series.iloc[-85])
+            change_84 = (current / prior - 1) if prior else 0.0
+        values.extend([current, change_28, change_84])
+    return values
 
 
 @dataclass
@@ -161,6 +274,8 @@ class MLBaseStrategy(BaseStrategy):
         cuda_ordinal: int = 0,
         xgb_params: Optional[dict] = None,
         ridge_alpha: float = 1.0,
+        expanded_features: Optional[bool] = None,
+        embargo_intervals: int = 1,
     ) -> None:
         self.model_family = model_family
         self.train_window_days = train_window_days
@@ -175,6 +290,8 @@ class MLBaseStrategy(BaseStrategy):
         self.cuda_ordinal = cuda_ordinal
         self.xgb_params = xgb_params or {}
         self.ridge_alpha = ridge_alpha
+        self.expanded_features = expanded_features
+        self.embargo_intervals = embargo_intervals
 
         self._context: dict = {}
         self._model = None
@@ -186,9 +303,15 @@ class MLBaseStrategy(BaseStrategy):
         self._last_training_info: dict = {}
         self._last_device: str = "cpu"
         self._last_fallback: Optional[str] = None
+        self._feature_names: List[str] = list(BASE_FEATURE_NAMES)
+        self._feature_hash: str = _feature_hash(self._feature_names)
+        self._macro_columns: List[str] = []
+        self._alt_keyword_order: List[str] = ["ticker", "name"]
+        self._alt_keywords_by_ticker: Dict[str, List[str]] = {}
 
     def set_context(self, context: dict) -> None:
         self._context = context
+        self._initialize_feature_spec()
 
     def get_last_signals(self) -> dict:
         return self._last_signals
@@ -202,6 +325,79 @@ class MLBaseStrategy(BaseStrategy):
     def get_last_training_info(self) -> dict:
         return self._last_training_info
 
+    def _use_expanded_features(self) -> bool:
+        if self.expanded_features is not None:
+            return self.expanded_features
+        ml_config = self._context.get("ml_config", {})
+        return bool(ml_config.get("expanded"))
+
+    def _initialize_feature_spec(self) -> None:
+        expanded = self._use_expanded_features()
+        feature_names = list(BASE_FEATURE_NAMES)
+        if expanded:
+            feature_names.extend(EXPANDED_FEATURE_NAMES)
+
+        external = self._context.get("external_features", {})
+        macro_df = external.get("macro") if isinstance(external, dict) else None
+        alt_df = external.get("alt") if isinstance(external, dict) else None
+
+        self._macro_columns = []
+        if macro_df is not None and not macro_df.empty:
+            self._macro_columns = list(macro_df.columns)
+            for col in self._macro_columns:
+                safe = col.replace("/", "_")
+                feature_names.extend(
+                    [
+                        f"macro_{safe}_level",
+                        f"macro_{safe}_chg_21",
+                        f"macro_{safe}_chg_63",
+                    ]
+                )
+
+        self._alt_keywords_by_ticker = self._context.get("alt_keywords_by_ticker", {}) or {}
+        if alt_df is not None and not alt_df.empty:
+            for idx in range(len(self._alt_keyword_order)):
+                feature_names.extend(
+                    [
+                        f"alt_kw{idx+1}_level",
+                        f"alt_kw{idx+1}_chg_28",
+                        f"alt_kw{idx+1}_chg_84",
+                    ]
+                )
+
+        self._feature_names = feature_names
+        self._feature_hash = _feature_hash(feature_names)
+
+    def _compute_feature_vector(self, prices: pd.DataFrame, ticker: str, as_of: date) -> Optional[np.ndarray]:
+        base = _compute_base_features(prices, ticker, as_of)
+        if base is None:
+            return None
+
+        features = list(base)
+
+        if self._use_expanded_features():
+            expanded = _compute_expanded_features(prices, ticker, as_of)
+            if expanded is None:
+                return None
+            features.extend(expanded)
+
+        external = self._context.get("external_features", {})
+        macro_df = external.get("macro") if isinstance(external, dict) else None
+        alt_df = external.get("alt") if isinstance(external, dict) else None
+
+        if self._macro_columns:
+            features.extend(_macro_feature_values(macro_df, as_of, self._macro_columns))
+
+        if alt_df is not None and self._alt_keywords_by_ticker:
+            keywords = self._alt_keywords_by_ticker.get(ticker, [])
+            if len(keywords) < len(self._alt_keyword_order):
+                keywords = keywords + [""] * (len(self._alt_keyword_order) - len(keywords))
+            features.extend(_alt_feature_values(alt_df, as_of, keywords[: len(self._alt_keyword_order)]))
+
+        if any(pd.isna(value) for value in features):
+            return None
+        return np.array(features, dtype=float)
+
     def _should_refit(self, decision_index: int) -> bool:
         if self._model is None:
             return True
@@ -213,7 +409,7 @@ class MLBaseStrategy(BaseStrategy):
             return (decision_index - self._last_train_index) >= self.refit_n
         return False
 
-    def _build_training_rows(self, as_of_date: date) -> List[tuple]:
+    def _build_training_rows(self, decision_index: int, as_of_date: date) -> List[tuple]:
         schedule = self._context.get("decision_schedule", [])
         universe = self._context.get("universe")
         data = self._context.get("data_by_date")
@@ -221,7 +417,12 @@ class MLBaseStrategy(BaseStrategy):
             return []
 
         rows = []
+        ml_config = self._context.get("ml_config", {})
+        embargo = ml_config.get("embargo_intervals", self.embargo_intervals)
+        max_index = decision_index - 1 - embargo
         for idx in range(len(schedule) - 1):
+            if idx > max_index:
+                continue
             decision_date = schedule[idx]["decision_date"]
             next_fill_date = schedule[idx + 1]["fill_date"]
             if next_fill_date >= as_of_date:
@@ -231,7 +432,7 @@ class MLBaseStrategy(BaseStrategy):
                     continue
             tickers = universe.get_eligible_tickers(decision_date)
             for ticker in tickers:
-                features = _compute_features(data, ticker, decision_date)
+                features = self._compute_feature_vector(data, ticker, decision_date)
                 if features is None:
                     continue
                 rows.append((decision_date, ticker, features, schedule[idx], schedule[idx + 1]))
@@ -299,13 +500,16 @@ class MLBaseStrategy(BaseStrategy):
         raise ValueError(f"Unknown model_family: {self.model_family}")
 
     def _fit(self, decision_index: int, as_of_date: date, label_type: str) -> None:
-        rows = self._build_training_rows(as_of_date)
+        rows = self._build_training_rows(decision_index, as_of_date)
         data = self._context.get("data_by_date")
         if not rows or data is None:
             self._model = None
             self._last_training_info = {
                 "train_rows": 0,
-                "feature_hash": _feature_hash(),
+                "feature_hash": self._feature_hash,
+                "feature_count": len(self._feature_names),
+                "expanded_features": self._use_expanded_features(),
+                "embargo_intervals": self._context.get("ml_config", {}).get("embargo_intervals", self.embargo_intervals),
                 "model_family": self.model_family,
                 "device": "cpu",
                 "fallback": None,
@@ -332,7 +536,10 @@ class MLBaseStrategy(BaseStrategy):
             self._model = None
             self._last_training_info = {
                 "train_rows": len(y),
-                "feature_hash": _feature_hash(),
+                "feature_hash": self._feature_hash,
+                "feature_count": len(self._feature_names),
+                "expanded_features": self._use_expanded_features(),
+                "embargo_intervals": self._context.get("ml_config", {}).get("embargo_intervals", self.embargo_intervals),
                 "model_family": self.model_family,
                 "device": "cpu",
                 "fallback": None,
@@ -353,7 +560,10 @@ class MLBaseStrategy(BaseStrategy):
             "train_rows": len(y),
             "train_start": min(decision_dates).isoformat() if decision_dates else None,
             "train_end": max(decision_dates).isoformat() if decision_dates else None,
-            "feature_hash": _feature_hash(),
+            "feature_hash": self._feature_hash,
+            "feature_count": len(self._feature_names),
+            "expanded_features": self._use_expanded_features(),
+            "embargo_intervals": self._context.get("ml_config", {}).get("embargo_intervals", self.embargo_intervals),
             "model_family": self.model_family,
             "device": device_used,
             "fallback": fallback,
@@ -366,7 +576,7 @@ class MLBaseStrategy(BaseStrategy):
             return {}
         predictions: Dict[str, float] = {}
         for ticker in eligible_tickers:
-            features = _compute_features(data, ticker, as_of_date)
+            features = self._compute_feature_vector(data, ticker, as_of_date)
             if features is None:
                 continue
             pred = float(self._model.predict(np.array([features]))[0])
@@ -595,7 +805,7 @@ class MLRiskAdjustedStrategy(MLBaseStrategy):
         return target_weights
 
     def _fit_vol(self, decision_index: int, as_of_date: date) -> None:
-        rows = self._build_training_rows(as_of_date)
+        rows = self._build_training_rows(decision_index, as_of_date)
         data = self._context.get("data_by_date")
         if not rows or data is None:
             self._model_vol = None
@@ -626,7 +836,7 @@ class MLRiskAdjustedStrategy(MLBaseStrategy):
             return {}
         predictions: Dict[str, float] = {}
         for ticker in eligible_tickers:
-            features = _compute_features(data, ticker, as_of_date)
+            features = self._compute_feature_vector(data, ticker, as_of_date)
             if features is None:
                 continue
             pred = float(self._model_vol.predict(np.array([features]))[0])

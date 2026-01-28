@@ -195,6 +195,12 @@ def print_suite_effective_settings(config: SuiteConfig) -> None:
     click.echo(f"  meta.enabled: {config.meta.enabled}")
     click.echo(f"  meta.min_periods_before_selection: {config.meta.min_periods_before_selection}")
     click.echo(f"  meta.baseline_strategy: {config.meta.baseline_strategy}")
+    click.echo(f"  ml.expanded: {config.ml.expanded}")
+    click.echo(f"  ml.rolling_windows: {config.ml.rolling_windows}")
+    click.echo(f"  ml.expanding: {config.ml.expanding}")
+    click.echo(f"  ml.embargo_intervals: {config.ml.embargo_intervals}")
+    click.echo(f"  ml.macro_enabled: {config.ml.macro_enabled}")
+    click.echo(f"  ml.alt_enabled: {config.ml.alt_enabled}")
     click.echo(f"  execution.decision_days: {', '.join(config.execution.decision_days)}")
     click.echo(f"  execution.decision_time: {config.execution.decision_time}")
     click.echo(f"  execution.fill_time: {config.execution.fill_time}")
@@ -208,6 +214,43 @@ def print_suite_effective_settings(config: SuiteConfig) -> None:
     click.echo("  strategies:")
     for strategy in config.strategies:
         click.echo(f"    - {strategy.name}: {strategy.type}")
+
+
+def _print_summary_metrics(title: str, metrics: Mapping[str, object]) -> None:
+    click.echo(title)
+    click.echo(f"  Final Value: {metrics['final_value']:.2f}")
+    click.echo(f"  Total Return: {metrics['total_return_pct']:.2f}%")
+    click.echo(f"  CAGR: {metrics['cagr_pct']:.2f}%")
+    click.echo(f"  Sharpe: {metrics['sharpe']:.2f}")
+    click.echo(f"  Max Drawdown: {metrics['max_drawdown_pct']:.2f}%")
+    click.echo(f"  Turnover: {metrics['turnover']:.4f}")
+    click.echo(
+        f"  Decisions executed/skipped: {metrics['decisions_executed']}/{metrics['decisions_skipped']}"
+    )
+
+
+def _print_suite_summary(summary: Mapping[str, object]) -> None:
+    meta_summary = summary.get("meta")
+    if meta_summary and isinstance(meta_summary, Mapping):
+        _print_summary_metrics("Meta portfolio summary:", meta_summary["metrics"])
+
+    best = summary.get("best_overall")
+    if best:
+        metrics = best["metrics"]
+        eligible = "eligible" if best.get("eligible") else "ineligible"
+        click.echo(f"Best strategy overall ({eligible}): {best['strategy']}")
+        _print_summary_metrics("Strategy metrics:", metrics)
+
+    top_three = summary.get("top3", [])
+    if top_three:
+        click.echo("Top 3 strategies:")
+        for idx, entry in enumerate(top_three, start=1):
+            metrics = entry["metrics"]
+            click.echo(
+                f"  {idx}. {entry['strategy']} | Sharpe {metrics['sharpe']:.2f} | "
+                f"CAGR {metrics['cagr_pct']:.2f}% | Max DD {metrics['max_drawdown_pct']:.2f}% | "
+                f"Turnover {metrics['turnover']:.4f}"
+            )
 
 
 def _parse_csv_list(value: str) -> list[str]:
@@ -363,6 +406,12 @@ def edit_suite_interactively(config: SuiteConfig) -> None:
         "Min periods before selection",
         default=config.meta.min_periods_before_selection,
         type=int,
+        show_default=True,
+    )
+    config.ml.expanded = click.prompt(
+        "Expanded ML (slower)",
+        default=config.ml.expanded,
+        type=bool,
         show_default=True,
     )
 
@@ -529,6 +578,8 @@ def report(run_id: str) -> None:
         "decision_log.jsonl",
         "forecasts.csv",
         "leaderboard.csv",
+        "suite_summary.json",
+        "regime_leaderboard.csv",
         "reliability_report.json",
     ):
         artifact_path = target / artifact
@@ -647,7 +698,46 @@ def suite(
     result = runner.run(config)
 
     click.echo(f"Suite run complete: {result['run_id']}")
+    if result.get("suite_summary"):
+        _print_suite_summary(result["suite_summary"])
     click.echo(f"Outputs saved to: {format_path_for_display(Path(result['output_path']))}")
+
+
+@cli.command()
+@click.option("--headless-run", is_flag=True, help="Run once without launching the UI window")
+@click.option("--suite", "suite_mode", is_flag=True, help="Run a suite in headless mode")
+@click.option("--config", "config_path", required=False, help="Path to YAML config file")
+@click.option("--start", "start_date", required=False, help="Override start date (YYYY-MM-DD)")
+@click.option("--end", "end_date", required=False, help="Override end date (YYYY-MM-DD)")
+def ui(
+    headless_run: bool,
+    suite_mode: bool,
+    config_path: str | None,
+    start_date: str | None,
+    end_date: str | None,
+) -> None:
+    """Launch the ROMULUS desktop UI."""
+    from romulus.ui.app import launch_ui, run_headless
+
+    if headless_run:
+        config_file = resolve_config_path(
+            config_path,
+            [Path("configs/suite_default.yaml"), Path("configs/default.yaml")]
+            if suite_mode
+            else [Path("configs/etf_equal_weight.yaml"), Path("configs/default.yaml")],
+        )
+        if not config_file.exists():
+            raise click.ClickException(f"Config file not found: {config_file}")
+        result = run_headless(
+            str(config_file),
+            start_date=start_date,
+            end_date=end_date,
+            suite=suite_mode,
+        )
+        click.echo(json.dumps(result, indent=2, default=str))
+        return
+
+    launch_ui()
 
 
 def main() -> None:

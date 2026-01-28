@@ -125,3 +125,11 @@ def test_suite_runner_outputs_and_determinism(tmp_path, monkeypatch) -> None:
 
     forecasts_path = run_path / "forecasts.csv"
     assert forecasts_path.exists()
+
+    suite_summary_path = run_path / "suite_summary.json"
+    assert suite_summary_path.exists()
+    suite_summary = json.loads(suite_summary_path.read_text(encoding="utf-8"))
+    assert "best_overall" in suite_summary
+
+    regime_path = run_path / "regime_leaderboard.csv"
+    assert regime_path.exists()

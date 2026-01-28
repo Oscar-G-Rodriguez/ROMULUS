@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -12,11 +13,19 @@ from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
 
+from romulus.backtest.metrics import compute_metrics
+from romulus.backtest.progress import ProgressTracker
 from romulus.backtest.schedule import build_decision_schedule
 from romulus.calendar.decision_days import generate_decision_calendar
 from romulus.calendar.trading_days import get_trading_days
 from romulus.config.schema import SuiteConfig
 from romulus.data.ingestion import fetch_daily_data
+from romulus.data.external_features import (
+    DEFAULT_MACRO_SERIES,
+    align_features_to_dates,
+    fetch_pytrends_series,
+    fetch_quandl_series,
+)
 from romulus.data.universe import Universe
 from romulus.portfolio.account import Portfolio
 from romulus.portfolio.fills import Fill, simulate_fills
@@ -47,6 +56,20 @@ class StrategyState:
     total_gross: float = 0.0
     forecasts: List[Dict[str, object]] = field(default_factory=list)
     last_fill_value: Optional[float] = None
+    interval_records: List[Dict[str, object]] = field(default_factory=list)
+
+
+@dataclass
+class MetaState:
+    portfolio: Portfolio
+    decision_log: List[Dict[str, object]] = field(default_factory=list)
+    trades: List[Dict[str, object]] = field(default_factory=list)
+    portfolio_values: List[Dict[str, object]] = field(default_factory=list)
+    returns: List[float] = field(default_factory=list)
+    turnover: List[float] = field(default_factory=list)
+    last_fill_value: Optional[float] = None
+    total_costs: float = 0.0
+    total_gross: float = 0.0
 
 
 def _cash_weight(target_weights: Dict[str, float]) -> float:
@@ -76,6 +99,38 @@ def _compute_turnover(turnovers: List[float]) -> Optional[float]:
     if not turnovers:
         return None
     return float(pd.Series(turnovers).mean())
+
+
+def _decision_counts(decision_log: List[Dict[str, object]]) -> Dict[str, int]:
+    executed = sum(1 for entry in decision_log if not entry.get("skipped"))
+    skipped = sum(1 for entry in decision_log if entry.get("skipped"))
+    return {"executed": executed, "skipped": skipped}
+
+
+def _compute_cagr_from_returns(returns: List[float]) -> float:
+    if not returns:
+        return 0.0
+    value = 1.0
+    for ret in returns:
+        value *= 1 + ret
+    num_years = len(returns) / 252
+    if num_years <= 0:
+        return 0.0
+    return float((value ** (1 / num_years) - 1) * 100)
+
+
+def _returns_to_values(returns: List[float]) -> List[float]:
+    values = [1.0]
+    for ret in returns:
+        values.append(values[-1] * (1 + ret))
+    return values
+
+
+def _compute_win_rate(returns: List[float]) -> float:
+    if not returns:
+        return 0.0
+    wins = sum(1 for value in returns if value > 0)
+    return wins / len(returns)
 
 
 def _rolling_metrics(
@@ -151,6 +206,45 @@ class SuiteRunner:
         data_by_date = data.copy()
         data_by_date.index = data_by_date.index.date
 
+        external_features: Dict[str, pd.DataFrame] = {}
+        alt_keywords_by_ticker: Dict[str, List[str]] = {}
+        if config.ml.expanded:
+            target_dates = data_by_date.index
+            if config.ml.macro_enabled:
+                api_key = os.getenv("NASDAQ_DATA_LINK_API_KEY")
+                if not api_key:
+                    print("Warning: NASDAQ_DATA_LINK_API_KEY not set; skipping macro features.")
+                else:
+                    macro_series = config.ml.macro_series or DEFAULT_MACRO_SERIES
+                    macro_df = fetch_quandl_series(
+                        macro_series,
+                        api_key=api_key,
+                        cache_dir=config.data.cache_dir,
+                        start=config.backtest.start_date,
+                        end=config.backtest.end_date,
+                    )
+                    if not macro_df.empty:
+                        external_features["macro"] = align_features_to_dates(macro_df, target_dates)
+
+            if config.ml.alt_enabled:
+                keywords: List[str] = []
+                for entry in universe.get_entries():
+                    ticker_kw = entry.ticker
+                    name_kw = entry.name
+                    alt_keywords_by_ticker[entry.ticker] = [ticker_kw, name_kw]
+                    keywords.extend([ticker_kw, name_kw])
+                keywords = sorted(set(keywords))
+                if keywords:
+                    alt_df = fetch_pytrends_series(
+                        keywords=keywords,
+                        cache_dir=config.data.cache_dir,
+                        start=config.backtest.start_date,
+                        end=config.backtest.end_date,
+                        sleep_seconds=config.ml.alt_sleep_seconds,
+                    )
+                    if not alt_df.empty:
+                        external_features["alt"] = align_features_to_dates(alt_df, target_dates)
+
         warmup_start = config.warmup.start_date or config.backtest.start_date
         backtest_start_date = date.fromisoformat(config.backtest.start_date)
         warmup_start_date = date.fromisoformat(warmup_start)
@@ -204,7 +298,13 @@ class SuiteRunner:
         run_path = output_root / run_id
         run_path.mkdir(parents=True, exist_ok=True)
 
-        strategy_specs = self._expand_strategy_specs(config.strategies)
+        progress = ProgressTracker(
+            start_date=date.fromisoformat(config.backtest.start_date),
+            end_date=end_date,
+            label="Suite",
+        )
+
+        strategy_specs = self._expand_strategy_specs(config.strategies, config.ml)
         states = self._initialize_states(strategy_specs, config)
 
         decision_index_map = {
@@ -219,6 +319,9 @@ class SuiteRunner:
             "data_by_date": data_by_date,
             "costs": config.costs,
             "fill_field": fill_field,
+            "external_features": external_features,
+            "alt_keywords_by_ticker": alt_keywords_by_ticker,
+            "ml_config": config.ml.model_dump(),
         }
         self._context = context
         for state in states.values():
@@ -263,12 +366,12 @@ class SuiteRunner:
             )
 
         leaderboard_rows: List[Dict[str, object]] = []
-        meta_portfolio = Portfolio(cash=config.backtest.initial_cash, positions={})
-        meta_decision_log: List[Dict[str, object]] = []
-        meta_trades: List[Dict[str, object]] = []
+        meta_state: Optional[MetaState] = None
+        if config.meta.enabled:
+            meta_state = MetaState(portfolio=Portfolio(cash=config.backtest.initial_cash, positions={}))
 
-        if skip_record is not None and config.meta.enabled:
-            meta_decision_log.append(dict(skip_record))
+        if skip_record is not None and meta_state is not None:
+            meta_state.decision_log.append(dict(skip_record))
 
         for decision_index, entry in enumerate(schedule):
             decision_date = entry["decision_date"]
@@ -359,7 +462,7 @@ class SuiteRunner:
                     initialization=False,
                 )
 
-            if config.meta.enabled:
+            if config.meta.enabled and meta_state is not None:
                 if selected_strategy_name is None:
                     selected_strategy_name = config.meta.baseline_strategy
 
@@ -376,10 +479,10 @@ class SuiteRunner:
                         strategy_override=selected_strategy_name,
                     )
 
-                meta_trades.extend(
+                meta_state.trades.extend(
                     self._process_meta_decision(
                         config=config,
-                        portfolio=meta_portfolio,
+                        meta_state=meta_state,
                         decision_date=decision_date,
                         fill_date=fill_date,
                         decision_prices=decision_prices,
@@ -389,9 +492,11 @@ class SuiteRunner:
                         raw_weights=selected_weights,
                         selected_strategy=selected_strategy_name,
                         leaderboard_snapshot=ranking,
-                        decision_log=meta_decision_log,
                     )
                 )
+            progress.update(fill_date)
+
+        progress.finish()
 
         leaderboard_df = pd.DataFrame(leaderboard_rows)
         leaderboard_path = run_path / "leaderboard.csv"
@@ -404,11 +509,11 @@ class SuiteRunner:
         with (run_path / "reliability_report.json").open("w", encoding="utf-8") as handle:
             json.dump(reliability_report, handle, indent=2, sort_keys=True)
 
-        if config.meta.enabled:
+        if config.meta.enabled and meta_state is not None:
             meta_path = run_path / "meta"
             meta_path.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame(meta_trades).to_csv(meta_path / "trades.csv", index=False)
-            _write_jsonl(meta_path / "decision_log.jsonl", meta_decision_log)
+            pd.DataFrame(meta_state.trades).to_csv(meta_path / "trades.csv", index=False)
+            _write_jsonl(meta_path / "decision_log.jsonl", meta_state.decision_log)
 
         self._write_strategy_artifacts(states, run_path)
 
@@ -422,6 +527,19 @@ class SuiteRunner:
                 forecast_rows.append(enriched)
         if forecast_rows:
             pd.DataFrame(forecast_rows).to_csv(run_path / "forecasts.csv", index=False)
+
+        suite_summary = self._build_suite_summary(states, meta_state, config)
+        with (run_path / "suite_summary.json").open("w", encoding="utf-8") as handle:
+            json.dump(suite_summary, handle, indent=2, sort_keys=True)
+
+        regime_df = self._build_regime_leaderboard(
+            states=states,
+            schedule=schedule,
+            data_by_date=data_by_date,
+            config=config,
+        )
+        regime_path = run_path / "regime_leaderboard.csv"
+        regime_df.to_csv(regime_path, index=False)
 
         manifest = {
             "run_id": run_id,
@@ -438,6 +556,7 @@ class SuiteRunner:
             "run_id": run_id,
             "output_path": str(run_path),
             "leaderboard_hash": _hash_dataframe(leaderboard_df),
+            "suite_summary": suite_summary,
         }
 
     def _initialize_states(self, strategy_specs: List[dict], config: SuiteConfig) -> Dict[str, StrategyState]:
@@ -459,11 +578,21 @@ class SuiteRunner:
             )
         return states
 
-    def _expand_strategy_specs(self, strategies: List[object]) -> List[dict]:
+    def _expand_strategy_specs(self, strategies: List[object], ml_config: object) -> List[dict]:
         expanded: List[dict] = []
         for strat in strategies:
             base_params = strat.params or {}
             param_grid = strat.param_grid or {}
+            if getattr(ml_config, "expanded", False) and strat.type.startswith("ml_"):
+                if "train_window_days" not in param_grid and "train_window_days" not in base_params:
+                    param_grid["train_window_days"] = list(ml_config.rolling_windows)
+                if "expanding" not in param_grid and "expanding" not in base_params:
+                    expanding_values = [False, True] if getattr(ml_config, "expanding", False) else [False]
+                    param_grid["expanding"] = expanding_values
+                if "embargo_intervals" not in param_grid and "embargo_intervals" not in base_params:
+                    param_grid["embargo_intervals"] = [ml_config.embargo_intervals]
+                if "expanded_features" not in param_grid and "expanded_features" not in base_params:
+                    param_grid["expanded_features"] = [True]
             if not param_grid:
                 expanded.append({"name": strat.name, "type": strat.type, "params": base_params})
                 continue
@@ -772,6 +901,7 @@ class SuiteRunner:
             return
 
         pre_trade_value = state.portfolio.get_total_value(fill_prices)
+        interval_return = None
         if state.last_fill_value is not None and state.last_fill_value > 0:
             interval_return = (pre_trade_value - state.last_fill_value) / state.last_fill_value
             state.returns.append(interval_return)
@@ -806,6 +936,15 @@ class SuiteRunner:
         state.portfolio_values.append(
             {"date": fill_date, "total_value": total_value_after}
         )
+        state.interval_records.append(
+            {
+                "decision_date": decision_date,
+                "fill_date": fill_date,
+                "interval_return": interval_return,
+                "turnover": turnover,
+                "total_value": total_value_after,
+            }
+        )
         holdings_snapshot = {"date": _format_date(fill_date), "cash": state.portfolio.cash}
         holdings_snapshot.update(state.portfolio.positions)
         state.holdings.append(holdings_snapshot)
@@ -831,6 +970,7 @@ class SuiteRunner:
                 "portfolio_value_before": total_value_before,
                 "portfolio_value_pre_trade": pre_trade_value,
                 "portfolio_value_after": total_value_after,
+                "interval_return": interval_return,
                 "turnover_pre": constraint_info.get("turnover_pre"),
                 "turnover_post": constraint_info.get("turnover_post"),
                 "turnover_scale_factor": constraint_info.get("scale_factor"),
@@ -849,7 +989,7 @@ class SuiteRunner:
     def _process_meta_decision(
         self,
         config: SuiteConfig,
-        portfolio: Portfolio,
+        meta_state: MetaState,
         decision_date: date,
         fill_date: date,
         decision_prices: Dict[str, float],
@@ -859,8 +999,8 @@ class SuiteRunner:
         raw_weights: Dict[str, float],
         selected_strategy: str,
         leaderboard_snapshot: Dict[str, object],
-        decision_log: List[Dict[str, object]],
     ) -> List[Dict[str, object]]:
+        portfolio = meta_state.portfolio
         total_value_before = portfolio.get_total_value(decision_prices)
         current_weights = compute_current_weights(
             portfolio.positions,
@@ -889,6 +1029,11 @@ class SuiteRunner:
         fill_prices = self._get_prices(data_by_date, fill_date, eligible_tickers, fill_field)
         if not fill_prices:
             return []
+        pre_trade_value = portfolio.get_total_value(fill_prices)
+        interval_return = None
+        if meta_state.last_fill_value is not None and meta_state.last_fill_value > 0:
+            interval_return = (pre_trade_value - meta_state.last_fill_value) / meta_state.last_fill_value
+            meta_state.returns.append(interval_return)
         fills = simulate_fills(
             orders,
             fill_prices=fill_prices,
@@ -896,12 +1041,18 @@ class SuiteRunner:
             slippage_bps=config.costs.slippage_bps,
             commission=config.costs.commission_per_trade,
         )
+        for fill in fills:
+            meta_state.total_costs += fill.slippage_cost + fill.commission
+            meta_state.total_gross += fill.gross_value
         portfolio.apply_fills(fills)
         total_value_after = portfolio.get_total_value(fill_prices)
+        meta_state.last_fill_value = total_value_after
+        meta_state.portfolio_values.append({"date": fill_date, "total_value": total_value_after})
 
         trades = [self._fill_to_trade(fill, decision_date, False) for fill in fills]
+        meta_state.turnover.append(constraint_info.get("turnover_post", 0.0))
 
-        decision_log.append(
+        meta_state.decision_log.append(
             {
                 "decision_date": _format_date(decision_date),
                 "fill_date": _format_date(fill_date),
@@ -910,7 +1061,10 @@ class SuiteRunner:
                 "target_weights": target_weights,
                 "cash_weight": constraint_info.get("cash_weight", _cash_weight(target_weights)),
                 "portfolio_value_before": total_value_before,
+                "portfolio_value_pre_trade": pre_trade_value,
                 "portfolio_value_after": total_value_after,
+                "interval_return": interval_return,
+                "turnover_post": constraint_info.get("turnover_post"),
                 "leaderboard_top": leaderboard_snapshot.get("top"),
                 "leaderboard_ranks": leaderboard_snapshot.get("ranks"),
                 "leaderboard_eligibility": leaderboard_snapshot.get("eligibility"),
@@ -1058,6 +1212,308 @@ class SuiteRunner:
             ),
             "strategies": per_strategy,
         }
+
+    def _build_suite_summary(
+        self,
+        states: Dict[str, StrategyState],
+        meta_state: Optional[MetaState],
+        config: SuiteConfig,
+    ) -> Dict[str, object]:
+        summaries: Dict[str, Dict[str, object]] = {}
+        for name, state in states.items():
+            summaries[name] = self._build_portfolio_summary(
+                name=name,
+                portfolio_values=state.portfolio_values,
+                returns=state.returns,
+                turnovers=state.turnover,
+                decision_log=state.decision_log,
+                total_costs=state.total_costs,
+                total_gross=state.total_gross,
+            )
+
+        best_overall, top_three = self._select_best_overall(
+            summaries=summaries,
+            dd_limit=config.leaderboard.dd_limit,
+            turnover_limit=config.leaderboard.turnover_limit,
+            min_periods=config.meta.min_periods_before_selection,
+        )
+
+        meta_summary = None
+        if meta_state is not None:
+            meta_summary = self._build_portfolio_summary(
+                name="meta",
+                portfolio_values=meta_state.portfolio_values,
+                returns=meta_state.returns,
+                turnovers=meta_state.turnover,
+                decision_log=meta_state.decision_log,
+                total_costs=meta_state.total_costs,
+                total_gross=meta_state.total_gross,
+            )
+
+        return {
+            "objective": {
+                "primary": "net_sharpe",
+                "gates": {
+                    "max_drawdown": config.leaderboard.dd_limit,
+                    "turnover": config.leaderboard.turnover_limit,
+                    "min_periods": config.meta.min_periods_before_selection,
+                },
+                "tie_breakers": [
+                    "higher_cagr",
+                    "lower_max_drawdown_magnitude",
+                    "lower_turnover",
+                ],
+            },
+            "meta": meta_summary,
+            "best_overall": best_overall,
+            "top3": top_three,
+            "strategies": summaries,
+        }
+
+    def _build_portfolio_summary(
+        self,
+        name: str,
+        portfolio_values: List[Dict[str, object]],
+        returns: List[float],
+        turnovers: List[float],
+        decision_log: List[Dict[str, object]],
+        total_costs: float,
+        total_gross: float,
+    ) -> Dict[str, object]:
+        values = [entry["total_value"] for entry in portfolio_values]
+        series = pd.Series(values) if values else pd.Series()
+        metrics = compute_metrics(series)
+        max_drawdown = _compute_drawdown(values) if values else 0.0
+        if max_drawdown is None:
+            max_drawdown = 0.0
+        sharpe = _compute_sharpe(returns) if returns else 0.0
+        if sharpe is None:
+            sharpe = 0.0
+        turnover = _compute_turnover(turnovers) if turnovers else 0.0
+        if turnover is None:
+            turnover = 0.0
+        counts = _decision_counts(decision_log)
+        cost_drag = (total_costs / total_gross) if total_gross > 0 else 0.0
+
+        return {
+            "strategy": name,
+            "metrics": {
+                "final_value": metrics["final_value"],
+                "total_return_pct": metrics["total_return"],
+                "cagr_pct": metrics["cagr"],
+                "sharpe": sharpe,
+                "max_drawdown_pct": metrics["max_drawdown"],
+                "max_drawdown": max_drawdown,
+                "turnover": turnover,
+                "periods": len(returns),
+                "decisions_executed": counts["executed"],
+                "decisions_skipped": counts["skipped"],
+                "cost_drag": cost_drag,
+            },
+        }
+
+    def _select_best_overall(
+        self,
+        summaries: Dict[str, Dict[str, object]],
+        dd_limit: float,
+        turnover_limit: float,
+        min_periods: int,
+    ) -> tuple[Optional[Dict[str, object]], List[Dict[str, object]]]:
+        candidates: List[Dict[str, object]] = []
+        for summary in summaries.values():
+            metrics = summary["metrics"]
+            eligible = (
+                metrics["periods"] >= min_periods
+                and metrics["max_drawdown"] >= dd_limit
+                and metrics["turnover"] <= turnover_limit
+            )
+            entry = dict(summary)
+            entry["eligible"] = eligible
+            candidates.append(entry)
+
+        if not candidates:
+            return None, []
+
+        eligible_candidates = [entry for entry in candidates if entry["eligible"]]
+        ranking_pool = eligible_candidates if eligible_candidates else candidates
+
+        def sort_key(entry: Dict[str, object]) -> tuple:
+            metrics = entry["metrics"]
+            sharpe = metrics["sharpe"] if metrics["sharpe"] is not None else float("-inf")
+            cagr = metrics["cagr_pct"] if metrics["cagr_pct"] is not None else float("-inf")
+            max_drawdown = metrics["max_drawdown"] if metrics["max_drawdown"] is not None else -1e9
+            turnover = metrics["turnover"] if metrics["turnover"] is not None else float("inf")
+            return (-sharpe, -cagr, -max_drawdown, turnover, entry["strategy"])
+
+        ranking_pool = sorted(ranking_pool, key=sort_key)
+        best = ranking_pool[0] if ranking_pool else None
+        top_three = ranking_pool[:3]
+        return best, top_three
+
+    def _build_regime_leaderboard(
+        self,
+        states: Dict[str, StrategyState],
+        schedule: List[Dict[str, object]],
+        data_by_date: pd.DataFrame,
+        config: SuiteConfig,
+    ) -> pd.DataFrame:
+        market_ids = self._compute_market_ids(data_by_date, schedule)
+        rows: List[Dict[str, object]] = []
+
+        for state in states.values():
+            regime_records: Dict[str, List[Dict[str, object]]] = {}
+            for record in state.interval_records:
+                interval_return = record.get("interval_return")
+                if interval_return is None:
+                    continue
+                decision_date = record["decision_date"]
+                market_id = market_ids.get(decision_date, "UNKNOWN")
+                regime_records.setdefault(market_id, []).append(record)
+
+            for market_id, records in regime_records.items():
+                returns = [rec["interval_return"] for rec in records if rec.get("interval_return") is not None]
+                if not returns:
+                    continue
+                turnovers = [rec["turnover"] for rec in records if rec.get("turnover") is not None]
+                sharpe = _compute_sharpe(returns) or 0.0
+                cagr = _compute_cagr_from_returns(returns)
+                values = _returns_to_values(returns)
+                max_dd = _compute_drawdown(values) if values else 0.0
+                if max_dd is None:
+                    max_dd = 0.0
+                turnover = _compute_turnover(turnovers) if turnovers else 0.0
+                if turnover is None:
+                    turnover = 0.0
+                win_rate = _compute_win_rate(returns)
+
+                rows.append(
+                    {
+                        "market_id": market_id,
+                        "strategy": state.name,
+                        "intervals": len(returns),
+                        "sharpe": sharpe,
+                        "cagr": cagr,
+                        "max_dd": max_dd,
+                        "turnover": turnover,
+                        "win_rate": win_rate,
+                    }
+                )
+
+        columns = [
+            "market_id",
+            "strategy",
+            "intervals",
+            "sharpe",
+            "cagr",
+            "max_dd",
+            "turnover",
+            "win_rate",
+            "best_strategy_for_market_id",
+        ]
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        df = pd.DataFrame(rows)
+
+        best_map: Dict[str, Optional[str]] = {}
+        for market_id, group in df.groupby("market_id"):
+            best_map[market_id] = self._select_best_from_rows(
+                group,
+                dd_limit=config.leaderboard.dd_limit,
+                turnover_limit=config.leaderboard.turnover_limit,
+                min_periods=config.meta.min_periods_before_selection,
+            )
+
+        df["best_strategy_for_market_id"] = df["market_id"].map(best_map)
+        return df[columns]
+
+    def _select_best_from_rows(
+        self,
+        group: pd.DataFrame,
+        dd_limit: float,
+        turnover_limit: float,
+        min_periods: int,
+    ) -> Optional[str]:
+        eligible = group[
+            (group["intervals"] >= min_periods)
+            & (group["max_dd"] >= dd_limit)
+            & (group["turnover"] <= turnover_limit)
+        ]
+        pool = eligible if not eligible.empty else group
+
+        pool = pool.copy()
+        pool["sort_sharpe"] = pool["sharpe"].fillna(-float("inf"))
+        pool["sort_cagr"] = pool["cagr"].fillna(-float("inf"))
+        pool["sort_drawdown"] = pool["max_dd"].fillna(-float("inf"))
+        pool["sort_turnover"] = pool["turnover"].fillna(float("inf"))
+        pool = pool.sort_values(
+            by=["sort_sharpe", "sort_cagr", "sort_drawdown", "sort_turnover", "strategy"],
+            ascending=[False, False, False, True, True],
+        )
+
+        if pool.empty:
+            return None
+        return str(pool.iloc[0]["strategy"])
+
+    def _compute_market_ids(
+        self,
+        data_by_date: pd.DataFrame,
+        schedule: List[Dict[str, object]],
+    ) -> Dict[date, str]:
+        tickers = list(data_by_date.columns.get_level_values(0).unique())
+        equity_ticker = "SPY" if "SPY" in tickers else (tickers[0] if tickers else None)
+
+        market_ids: Dict[date, str] = {}
+        for entry in schedule:
+            decision_date = entry["decision_date"]
+            market_ids[decision_date] = self._market_id_for_date(
+                data_by_date,
+                decision_date,
+                equity_ticker,
+            )
+        return market_ids
+
+    def _market_id_for_date(
+        self,
+        data_by_date: pd.DataFrame,
+        decision_date: date,
+        equity_ticker: Optional[str],
+    ) -> str:
+        if equity_ticker is None:
+            return "UNKNOWN"
+        if decision_date not in data_by_date.index:
+            return "UNKNOWN"
+
+        try:
+            series = data_by_date.loc[:decision_date, (equity_ticker, "Close")].dropna()
+        except KeyError:
+            return "UNKNOWN"
+
+        if len(series) < 64:
+            return "UNKNOWN"
+
+        ret_63 = series.iloc[-1] / series.iloc[-64] - 1
+        returns = series.pct_change().dropna()
+        if len(returns) < 21:
+            return "UNKNOWN"
+        vol_21 = returns.tail(21).std() * (252 ** 0.5)
+        dd_63 = _compute_drawdown(series.tail(63).tolist())
+        if dd_63 is None:
+            return "UNKNOWN"
+
+        if ret_63 > 0.03:
+            trend = "UP"
+        elif ret_63 < -0.03:
+            trend = "DOWN"
+        else:
+            trend = "SIDE"
+
+        vol_bucket = "LOWVOL" if vol_21 < 0.18 else "HIGHVOL"
+        market_id = f"{trend}_{vol_bucket}"
+        if dd_63 <= -0.12:
+            market_id = f"{market_id}_STRESS"
+
+        return market_id
 
     @staticmethod
     def _hash_config(config: SuiteConfig) -> str:

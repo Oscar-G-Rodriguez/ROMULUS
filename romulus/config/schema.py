@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BacktestSettings(BaseModel):
@@ -82,12 +82,25 @@ class LeaderboardConfig(BaseModel):
     window: int = Field(default=20, ge=1, description="Rolling window length for metrics")
     dd_limit: float = Field(default=-0.2, description="Max drawdown gate (negative fraction)")
     turnover_limit: float = Field(default=1.0, ge=0, description="Max turnover gate per period")
+    regime_min_periods: int = Field(
+        default=4,
+        ge=0,
+        description="Completed matching-regime intervals required before conditional champion scoring; 0 disables it",
+    )
+    global_weight: float = Field(default=0.60, ge=0, le=1)
+    regime_weight: float = Field(default=0.40, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_score_weights(self) -> "LeaderboardConfig":
+        if self.global_weight + self.regime_weight <= 0:
+            raise ValueError("At least one leaderboard score weight must be positive")
+        return self
 
 
 class MetaConfig(BaseModel):
     """Configuration for optional meta-strategy selection."""
 
-    enabled: bool = Field(default=False, description="Enable meta-strategy selection")
+    enabled: bool = Field(default=True, description="Enable meta-strategy selection")
     min_periods_before_selection: int = Field(
         default=4,
         ge=0,
@@ -97,6 +110,10 @@ class MetaConfig(BaseModel):
         default="equal_weight",
         description="Baseline strategy used before selection begins",
     )
+    selection_day: Literal["monday", "tuesday", "wednesday", "thursday", "friday"] = Field(
+        default="friday", description="Weekday on which the champion may change"
+    )
+    switch_margin: float = Field(default=0.10, ge=0, le=1, description="Minimum normalized lead required to replace an eligible incumbent")
 
 
 class MLConfig(BaseModel):
@@ -113,12 +130,12 @@ class MLConfig(BaseModel):
         ge=0,
         description="Number of recent intervals to embargo from training",
     )
-    macro_enabled: bool = Field(default=True, description="Enable macro features from Nasdaq Data Link")
+    macro_enabled: bool = Field(default=False, description="Enable only point-in-time macro features with availability dates")
     macro_series: Optional[List[str]] = Field(
         default=None,
         description="Optional Nasdaq Data Link series codes (e.g., FRED/GDP)",
     )
-    alt_enabled: bool = Field(default=True, description="Enable alt features from pytrends")
+    alt_enabled: bool = Field(default=False, description="Enable only point-in-time alt features with availability dates")
     alt_sleep_seconds: float = Field(
         default=1.0,
         ge=0,
@@ -187,7 +204,7 @@ class CostConfig(BaseModel):
 class DataConfig(BaseModel):
     """Configuration for data sources."""
 
-    source: Literal["yfinance"] = Field(
+    source: Literal["yfinance", "cache", "synthetic"] = Field(
         default="yfinance",
         description="Data source provider"
     )
@@ -198,6 +215,10 @@ class DataConfig(BaseModel):
     adjustment: Literal["split_and_dividend", "none"] = Field(
         default="split_and_dividend",
         description="Price adjustment method"
+    )
+    coverage_policy: Literal["dynamic", "common"] = Field(
+        default="dynamic",
+        description="Date-bound policy used by the desktop data inspector",
     )
 
 

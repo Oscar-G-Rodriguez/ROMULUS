@@ -253,6 +253,8 @@ class VolTargetStrategy(BaseStrategy):
 
         weights_series = pd.Series(base_weights)
         portfolio_returns = aligned.dot(weights_series.loc[aligned.columns])
+        # These are daily close-to-close observations, so 252 is a market-day
+        # volatility conversion, not an event-count annualization.
         realized_vol = portfolio_returns.std() * (252 ** 0.5)
         if realized_vol <= 0:
             scale = 0.0

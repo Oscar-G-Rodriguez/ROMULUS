@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Mapping
 
 import click
+import yaml
 
 from romulus import __version__
 from romulus.backtest.engine import BacktestEngine
@@ -192,6 +193,7 @@ def print_suite_effective_settings(config: SuiteConfig) -> None:
     click.echo(f"  leaderboard.window: {config.leaderboard.window}")
     click.echo(f"  leaderboard.dd_limit: {config.leaderboard.dd_limit}")
     click.echo(f"  leaderboard.turnover_limit: {config.leaderboard.turnover_limit}")
+    click.echo(f"  leaderboard.regime_min_periods: {config.leaderboard.regime_min_periods}")
     click.echo(f"  meta.enabled: {config.meta.enabled}")
     click.echo(f"  meta.min_periods_before_selection: {config.meta.min_periods_before_selection}")
     click.echo(f"  meta.baseline_strategy: {config.meta.baseline_strategy}")
@@ -421,7 +423,49 @@ def _default_run_template() -> str:
 
 
 def _default_suite_template() -> str:
-    return """backtest:\n  name: \"ROMULUS Suite Default\"\n  start_date: \"2010-01-01\"\n  end_date: \"2024-12-31\"\n  initial_cash: 10000.0\n\nuniverse:\n  source: \"configs/universe_default.json\"\n\nstrategies:\n  - name: \"equal_weight\"\n    type: \"equal_weight\"\n  - name: \"cash_only\"\n    type: \"cash_only\"\n  - name: \"inv_vol\"\n    type: \"inv_vol\"\n  - name: \"ts_mom\"\n    type: \"ts_mom\"\n  - name: \"xsec_mom\"\n    type: \"xsec_mom\"\n  - name: \"vol_target\"\n    type: \"vol_target\"\n  - name: \"ml_risk_adjusted\"\n    type: \"ml_risk_adjusted\"\n    params:\n      model_family: \"ridge\"\n      device: \"cpu\"\n\nexecution:\n  decision_days: [\"wednesday\", \"friday\"]\n  decision_time: \"close\"\n  fill_time: \"open\"\n  fractional_shares: true\n  min_order_notional: 1.0\n  cash_buffer_pct: 0.01\n  max_weight: 0.35\n  turnover_cap: 0.35\n\ncosts:\n  commission_per_trade: 0.0\n  slippage_bps: 5.0\n\ndata:\n  source: \"yfinance\"\n  cache_dir: \"data/cache\"\n  adjustment: \"split_and_dividend\"\n\noutput:\n  run_dir: \"outputs/suite_runs\"\n\nwarmup:\n  enabled: true\n  start_date: \"2008-01-01\"\n  rebase: true\n\nleaderboard:\n  window: 20\n  dd_limit: -0.2\n  turnover_limit: 1.0\n\nmeta:\n  enabled: false\n  min_periods_before_selection: 4\n  baseline_strategy: \"equal_weight\"\n"""
+    checked_in = Path(__file__).resolve().parents[2] / "configs" / "suite_default.yaml"
+    if checked_in.exists():
+        return checked_in.read_text(encoding="utf-8")
+    # Keep `romulus init --suite` functional in an installed wheel where the
+    # repository-level example configuration is not present.
+    candidates = [
+        {"name": name, "type": kind}
+        for name, kind in (
+            ("equal_weight", "equal_weight"), ("cash_only", "cash_only"),
+            ("buy_and_hold", "buy_and_hold"),
+            ("inv_vol", "inv_vol"), ("ts_mom", "ts_mom"),
+            ("xsec_mom", "xsec_mom"), ("vol_target", "vol_target"),
+            ("ma_crossover", "ma_crossover"),
+        )
+    ]
+    for name, kind in (
+        ("ml_return_xgb", "ml_return"),
+        ("ml_vol_xgb", "ml_vol"),
+        ("ml_rar_xgb", "ml_risk_adjusted"),
+    ):
+        candidates.append({
+            "name": name,
+            "type": kind,
+            "params": {"model_family": "xgboost", "device": "auto"},
+        })
+    candidates.append({
+        "name": "ml_rar_ridge",
+        "type": "ml_risk_adjusted",
+        "params": {"model_family": "ridge", "device": "cpu"},
+    })
+    payload = {
+        "backtest": {"name": "ROMULUS Suite Default", "start_date": "2010-01-01", "end_date": "2024-12-31", "initial_cash": 10000.0},
+        "universe": {"source": "configs/universe_default.json"},
+        "strategies": candidates,
+        "execution": {"decision_days": ["wednesday", "friday"], "decision_time": "close", "fill_time": "open", "fractional_shares": True, "min_order_notional": 1.0, "cash_buffer_pct": 0.01, "max_weight": 0.35, "turnover_cap": 0.35},
+        "costs": {"commission_per_trade": 0.0, "slippage_bps": 5.0},
+        "data": {"source": "yfinance", "cache_dir": "data/cache", "adjustment": "split_and_dividend", "coverage_policy": "dynamic"},
+        "output": {"run_dir": "outputs/suite_runs"},
+        "warmup": {"enabled": True, "start_date": "2008-01-01", "rebase": True},
+        "leaderboard": {"window": 20, "dd_limit": -0.2, "turnover_limit": 1.0, "regime_min_periods": 4, "global_weight": 0.6, "regime_weight": 0.4},
+        "meta": {"enabled": True, "min_periods_before_selection": 4, "baseline_strategy": "equal_weight", "selection_day": "friday", "switch_margin": 0.1},
+    }
+    return yaml.safe_dump(payload, sort_keys=False)
 
 
 @cli.command()

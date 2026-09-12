@@ -7,17 +7,13 @@ name = "romulus"
 version = "0.3.0"
 description = "ROMULUS Phase B+ - Strategy suite backtesting with ML extensions"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 license = {text = "MIT"}
-authors = [
-    {name = "Oscar", email = "oscar@example.com"}
-]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
@@ -30,16 +26,18 @@ dependencies = [
     "pandas-market-calendars>=4.0.0",
     "pyyaml>=6.0",
     "requests>=2.31.0",
+    "xgboost>=3.4,<4",
 ]
 
 [project.optional-dependencies]
+external-data = [
+    "pytrends>=4.9.2",
+]
+
+[dependency-groups]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-]
-ml = [
-    "xgboost>=2.0.0",
-    "pytrends>=4.9.2",
 ]
 
 [project.scripts]
@@ -53,4 +51,12 @@ include = ["romulus*"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v"
+addopts = "-v --cov=romulus --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+source = ["romulus"]
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true

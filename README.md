@@ -1,156 +1,151 @@
-# ROMULUS Phase B+
+# ROMULUS
 
-ROMULUS is a deterministic ETF basket backtesting engine built around Wednesday/Friday decision events, explicit execution timing (open/close), and a configurable cost model. Phase B+ expands the engine with a strategy suite runner, shadow portfolios, and a no-lookahead leaderboard that compares strategies under identical market conditions. Optional meta-strategy selection lets ROMULUS trade the top eligible strategy over time. All runs are audit-ready with full decision logs, trades, holdings, forecasts, and reliability reporting.
+ROMULUS is a deterministic, event-driven research backtester that compares multiple strategy portfolios and lets a regime-aware meta-portfolio follow a weekly champion.
 
-## Install
+> **Research software only.** ROMULUS is not a live-trading system. It was a personal project, was not used in a competition, and provides no evidence of profitability, investment performance, or external validation.
 
-Single-file installer (recommended):
+## The 60-second explanation
 
-```bash
-cd /path/to/ROMULUS
-python install.py
+1. ROMULUS reads point-in-time price history and schedules Wednesday/Friday decisions.
+2. Every configured strategy receives the same as-of data and runs its own independent “shadow” portfolio.
+3. Before each decision, ROMULUS measures only completed prior intervals. It ranks global rolling Sharpe and performance in the current market regime.
+4. At Friday close, an eligible challenger can replace the incumbent if its composite score leads by the configured margin.
+5. The meta-portfolio copies the champion’s current target weights and fills at the next available open.
+6. The desktop app and audit files explain the regime, rankings, weights, orders, fills, costs, holdings, and outcome for every decision.
+
+```text
+dated OHLCV ──► as-of strategy suite ──► prior-only leaderboard
+     │                    │                       │
+     └──► regime state ───┘                       ▼
+                                      weekly champion decision
+                                                  │
+                                                  ▼
+                                  next-open meta-portfolio fills
+                                                  │
+                                                  ▼
+                                  UI + reproducible audit artifacts
 ```
 
-Add `--ml` to include XGBoost:
+## Start here
 
-```bash
-python install.py --ml
+```powershell
+uv python install 3.12
+uv sync --frozen --group dev
+uv run pytest
+uv run python scripts/offline_demo.py
+uv run romulus ui
 ```
 
-Global install with pipx (no venv activation needed):
+The offline demo generates deterministic synthetic prices and never downloads market data. In the app, choose **Synthetic**, click **Inspect Coverage**, select bounded dates, and click **Run ROMULUS Suite**.
 
-```bash
-python install.py --pipx
+The application is the primary workflow:
+
+- **Setup:** edit every suite setting, select synthetic/cache/market data, inspect coverage, and choose only valid dates.
+- **Run:** see the current simulated date, completed decisions, overall progress, active champion, ETA, and safe cancellation.
+- **Overview:** compare the meta portfolio with every individual strategy.
+- **Champion Timeline:** inspect the regime, incumbent, challenger, winner, margin, and reason each week.
+- **ML Accuracy:** inspect return, volatility, and risk-adjusted-return forecast diagnostics.
+- **Decision Audit:** click a champion date and follow the complete evidence chain through signals, weights, fills, costs, positions, and value.
+- **Diagnostics:** run a real CUDA XGBoost fit and see whether execution used `cuda:0` or CPU fallback.
+
+## Champion selection
+
+The default meta strategy is enabled. Every candidate is simulated independently before ROMULUS decides which one the separate meta portfolio should follow.
+
+For each eligible strategy, ROMULUS calculates cross-sectional percentile ranks:
+
+```text
+champion score = 0.60 × rolling-Sharpe rank
+               + 0.40 × same-regime net-return rank
 ```
 
-Manual install:
+The regime term activates after four completed matching-regime intervals. Before that, the global rank receives 100% weight. A strategy is ineligible when its rolling drawdown is below −20% or turnover exceeds 1.0. Champion identity may change only on Friday, and a normal challenger must lead the eligible incumbent by at least 0.10. Wednesday decisions may rebalance the incumbent but cannot change its identity.
 
-```bash
-python -m venv venv
-venv\Scripts\activate
-pip install -e ".[dev]"
-```
+The regime proxy is SPY when available:
 
-For ML strategies (XGBoost), install the optional ML extras:
+| Input | Classification |
+|---|---|
+| 63-day return | `UP` above 3%; `DOWN` below −3%; otherwise `SIDE` |
+| 21-day daily volatility × √252 | `LOWVOL` below 18%; otherwise `HIGHVOL` |
+| 63-day drawdown | append `STRESS` at or below −12% |
+| Fewer than 64 observations | `UNKNOWN` |
 
-```bash
-pip install -e ".[dev,ml]"
-```
+See [Champion selection](docs/CHAMPION_SELECTION.md) for the timing proof and worked example.
 
-## Quickstart (first 2 minutes)
+## Strategies
 
-```bash
-romulus init
-romulus config validate --config configs/default.yaml
-romulus run
-romulus suite
-```
+| Strategy | Signal and allocation | Cash behavior | ML |
+|---|---|---|---|
+| Cash | No asset targets | 100% cash | No |
+| Buy and hold | Equal initial purchase, then no scheduled rebalance orders | Initial execution buffer remains cash | No |
+| Equal weight | Equal allocation to eligible assets | Constraint buffer only | No |
+| Inverse volatility | Weight proportional to inverse trailing daily volatility | Unscored assets remain cash | No |
+| Time-series momentum | Own assets with positive trailing return | Fully defensive when none qualify | No |
+| Cross-sectional momentum | Own the strongest trailing-return assets | Defensive when the leader fails its floor | No |
+| Volatility target | Scale equal/inverse-vol exposure toward a target volatility | Unused risk budget stays cash | No |
+| Moving-average crossover | Own assets whose fast average exceeds the slow average | Defensive for negative signals | No |
+| ML return | Rank predicted next-interval net return | Cash when predicted edge is non-positive | XGBoost |
+| ML volatility | Prefer lowest predicted interval volatility | Constraint buffer only | XGBoost |
+| ML RAR | Rank predicted net return divided by predicted interval volatility | Cash when predicted edge is non-positive | XGBoost/Ridge baseline |
 
-See available strategies:
+## Metric definitions
 
-```bash
-romulus strategies list
-```
+| Metric | Definition |
+|---|---|
+| Interval return | next fill-open ÷ current fill-open − 1 |
+| Portfolio total return | ending value ÷ starting value − 1 |
+| CAGR | compound growth over actual elapsed calendar days |
+| Annualized volatility | timestamp-aware residual log-return volatility scaled over 365.25 days |
+| Sharpe | annualized timestamp-aware log-return drift ÷ annualized volatility; zero risk-free rate |
+| Realized interval volatility | square root of summed squared daily log returns between fills |
+| Predicted RAR | (predicted interval return − estimated cost fraction) ÷ predicted interval volatility |
+| Drawdown | portfolio value relative to its prior running maximum |
 
-You can also validate the suite config:
+Event-level portfolio metrics never pretend the twice-weekly observations are 252 daily observations. The √252 conversion is used only where the underlying observations truly are daily returns, such as the regime volatility classifier.
 
-```bash
-romulus config validate --config configs/suite_default.yaml --suite
-```
+## ML validation
 
-ROMULUS prints the config it resolved, effective settings, and output locations. By default, it offers a pre-run edit wizard; use `--no-edit` to skip the prompt.
+XGBoost uses fixed parameters, deterministic seeds, an embargo, and walk-forward training. It attempts CUDA first and falls back to deterministic CPU XGBoost with the reason recorded. Ridge is always a separately named comparison candidate.
 
-Example output snippet:
+`ml_evaluation.json` reports return MAE/RMSE/directional accuracy/rank correlation, volatility error and calibration, RAR rank diagnostics, and top-selection hit rate. Forecasts are divided chronologically into training, validation, and final-holdout reporting segments. These diagnostics are descriptive; they do not establish that ML adds value.
 
-```
-Using config: configs\default.yaml
-Effective settings:
-  backtest.start_date: 2010-01-01
-  backtest.end_date: 2024-12-31
-  backtest.initial_cash: 10000.0
-Outputs will be saved under: outputs\runs
-```
+See [ML validation](docs/ML_VALIDATION.md).
 
-Outputs live under `outputs/runs/{run_id}` for single runs and `outputs/suite_runs/{run_id}` for suites.
+## Audit artifacts
 
-## Desktop UI (no browser)
+Each suite run is stored beneath `outputs/suite_runs/<run-id>/`:
 
-ROMULUS ships a standalone desktop UI (Tkinter, no localhost). Launch it with:
+- `suite_summary.json`: meta and individual portfolio comparison.
+- `leaderboard.csv`: every candidate’s score components, gates, and rank on every decision.
+- `champion_timeline.csv`: week-by-week incumbent, challenger, selection, and reason.
+- `meta/decision_log.jsonl` and `meta/trades.csv`: executed meta decisions and trades.
+- `<strategy>/decision_log.jsonl`, `orders.csv`, `fills.csv`, `trades.csv`, and `holdings.csv`: shadow-portfolio evidence.
+- `forecasts.csv` and `ml_evaluation.json`: predictions, mature labels, and accuracy diagnostics.
+- `regime_leaderboard.csv`: descriptive after-run regime breakdown.
+- `manifest.json`: configuration hash, data coverage/checksums, runtime/device metadata, progress history, and completion status.
 
-```bash
-romulus ui
-```
+## Correctness boundaries
 
-The UI lets you run backtests/suites, view logs and progress, and scroll through all runs with details.
+- Strategy inputs are sliced as of each decision.
+- ML labels end before the current training decision and observe the configured embargo.
+- External features require explicit availability dates; observation dates alone are rejected.
+- Slippage exists once in the adverse fill price. `slippage_cost` is an audit decomposition, not another cash charge.
+- Sales execute before purchases, unaffordable buys are reduced, and missing marks for held positions are errors.
+- Omitted targets are liquidation instructions, not permission to silently retain holdings.
+- Cancellation occurs at a decision boundary and creates a manifest marked `cancelled`.
 
-## Configuration
+Detailed material:
 
-ROMULUS supports two config types:
+- [Architecture and accounting](docs/ARCHITECTURE.md)
+- [Champion selection](docs/CHAMPION_SELECTION.md)
+- [ML validation](docs/ML_VALIDATION.md)
+- [Desktop workflow](docs/UI_GUIDE.md)
+- [Public export guide](docs/PUBLIC_EXPORT.md)
+- [Correctness validation report](VALIDATION_REPORT.md)
 
-- **Run config**: a single strategy backtest (`romulus run`).
-- **Suite config**: multiple strategies with shadow portfolios, leaderboard ranking, and optional meta-selection (`romulus suite`).
+## Limitations and risk
 
-Warmup + rebase:
-
-- `warmup.enabled`: whether to run a warmup simulation.
-- `warmup.start_date`: optional earlier start date for warmup.
-- `warmup.rebase`: rebase the scored run to warmup weights at the first scored decision date.
-
-Meta-strategy selection:
-
-- `meta.enabled`: turn on selecting the top-ranked strategy.
-- `meta.min_periods_before_selection`: use baseline until this many periods pass.
-- `meta.baseline_strategy`: strategy used before selection starts.
-
-Parameter variants:
-
-- `param_grid`: expand a strategy into multiple parameterized variants automatically in a suite run.
-
-Key knobs:
-
-- `backtest.start_date`, `backtest.end_date`, `backtest.initial_cash`
-- `execution.decision_time`, `execution.fill_time`, `execution.max_weight`, `execution.turnover_cap`
-- `costs.commission_per_trade`, `costs.slippage_bps`
-- `leaderboard.dd_limit`, `leaderboard.turnover_limit`, `leaderboard.window`
-- `meta.min_periods_before_selection`
-
-## ML strategies
-
-ROMULUS ships ML strategies (ridge or XGBoost) that use only OHLCV features and strict as-of alignment. Enable XGBoost by installing the ML extra and set `model_family: "xgboost"` in the strategy params. GPU training is supported via `device: "cuda"` or `device: "auto"`; `auto` will fall back to CPU if CUDA is unavailable. For deterministic runs and tests, keep `device: "cpu"`.
-
-Expanded ML (suite-level) can add macro + alt features and test multiple walk-forward windows. In `configs/suite_default.yaml`:
-
-```yaml
-ml:
-  expanded: true
-  rolling_windows: [252, 504, 756]
-  expanding: true
-  embargo_intervals: 1
-  macro_enabled: true
-  alt_enabled: true
-```
-
-Macro features use Nasdaq Data Link (Quandl). Set the API key as an environment variable:
-
-```
-NASDAQ_DATA_LINK_API_KEY=your_key_here
-```
-
-Alt features use pytrends (no key required, rate-limited; cached on disk).
-
-## Artifacts
-
-Per run or suite, ROMULUS writes auditable artifacts such as:
-
-- `orders.csv`, `fills.csv`, `trades.csv`, `holdings.csv`
-- `decision_log.jsonl`
-- `forecasts.csv` (ML runs)
-- `leaderboard.csv`, `reliability_report.json` (suite runs)
-- `warmup_summary.json`, `initialization_trades.csv` (suite warmup + rebase)
-
-## Determinism
-
-Re-running the same config with the same cached data should produce identical hashes and leaderboard output. For suites, the leaderboard hash is returned in the run result and written to disk as `leaderboard.csv`. Determinism depends on unchanged configs and input data; ML determinism is strongest when `device: "cpu"` is used.
+Backtests remain sensitive to survivorship, delistings, corporate actions, point-in-time availability, data-vendor revisions, and execution assumptions. Synthetic demonstrations prove mechanics only. A favorable historical period is not evidence of future performance. Nothing here is investment advice or a recommendation.
 
 ## License
 

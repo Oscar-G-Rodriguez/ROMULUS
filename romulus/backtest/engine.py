@@ -4,24 +4,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+from math import isfinite
 from dataclasses import asdict
 from datetime import datetime, date, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
 from romulus.backtest.metrics import compute_metrics
-from romulus.backtest.progress import ProgressTracker
+from romulus.backtest.progress import ProgressEvent, ProgressReporter, ProgressTracker
 from romulus.backtest.schedule import build_decision_schedule
 from romulus.calendar.decision_days import generate_decision_calendar
 from romulus.calendar.trading_days import get_trading_days
 from romulus.config.schema import BacktestConfig
-from romulus.data.ingestion import fetch_daily_data
+from romulus.data.ingestion import fetch_daily_data, load_price_data
 from romulus.data.universe import Universe
+from romulus.data.coverage import build_coverage_index
 from romulus.portfolio.account import Portfolio
 from romulus.portfolio.fills import Fill, simulate_fills
 from romulus.portfolio.orders import generate_orders
+from romulus.runtime import collect_runtime_info
 from romulus.strategy.constraints import apply_weight_constraints, compute_current_weights
 from romulus.strategy.registry import create_strategy
 
@@ -29,19 +32,31 @@ from romulus.strategy.registry import create_strategy
 class BacktestEngine:
     """Orchestrates backtest execution."""
 
-    def run(self, config: BacktestConfig) -> Dict[str, object]:
+    def run(
+        self,
+        config: BacktestConfig,
+        progress_callback: Optional[Callable[[ProgressEvent], None]] = None,
+        cancel_requested: Optional[Callable[[], bool]] = None,
+    ) -> Dict[str, object]:
         """Run a backtest and return metadata/results."""
         start_time = datetime.now(timezone.utc)
+        progress_reporter = ProgressReporter(progress_callback, cancel_requested, warmup_enabled=False)
+        progress_reporter.emit("data", 0, 1, message="Loading price data")
 
         universe = Universe.load_from_json(config.universe.source)
         tickers = universe.get_all_tickers()
 
-        data = fetch_daily_data(
-            tickers=tickers,
-            start=config.backtest.start_date,
-            end=config.backtest.end_date,
-            cache_dir=config.data.cache_dir,
-        )
+        if config.data.source == "yfinance":
+            data = fetch_daily_data(
+                tickers=tickers, start=config.backtest.start_date,
+                end=config.backtest.end_date, cache_dir=config.data.cache_dir,
+            )
+        else:
+            data = load_price_data(
+                tickers=tickers, start=config.backtest.start_date,
+                end=config.backtest.end_date, cache_dir=config.data.cache_dir,
+                source=config.data.source,
+            )
 
         trading_days = get_trading_days(
             config.backtest.start_date,
@@ -77,10 +92,11 @@ class BacktestEngine:
             end_date,
         )
 
-        progress = ProgressTracker(
+        progress = None if progress_callback is not None else ProgressTracker(
             start_date=date.fromisoformat(config.backtest.start_date),
             end_date=end_date,
             label="Run",
+            total_units=len(schedule),
         )
 
         if skipped is not None:
@@ -100,6 +116,14 @@ class BacktestEngine:
 
         if not schedule:
             raise ValueError("No decision dates available for backtest run")
+        progress_reporter.emit("validation", 1, 1, message="Configuration and schedule validated")
+
+        # The pre-trade baseline makes initial transaction costs visible in
+        # reported performance while retaining event-timestamped valuation.
+        portfolio_value_history.append(
+            {"date": schedule[0]["decision_date"], "total_value": portfolio.cash}
+        )
+        progress_reporter.emit("data", 1, 1, message="Price data loaded")
 
         decision_index_map = {
             entry["decision_date"]: idx for idx, entry in enumerate(schedule)
@@ -119,7 +143,11 @@ class BacktestEngine:
 
         last_fill_value: float | None = None
 
-        for entry in schedule:
+        cancelled = False
+        for decision_number, entry in enumerate(schedule, start=1):
+            if cancel_requested is not None and cancel_requested():
+                cancelled = True
+                break
             decision_date = entry["decision_date"]
             fill_date = entry["fill_date"]
             eligible_tickers = universe.get_eligible_tickers(decision_date)
@@ -143,15 +171,20 @@ class BacktestEngine:
                 break
 
             decision_row = data_by_date.loc[decision_date]
+            tradable_tickers = list(dict.fromkeys([*eligible_tickers, *portfolio.positions]))
             decision_prices = {}
-            for ticker in eligible_tickers:
+            for ticker in tradable_tickers:
                 try:
-                    decision_prices[ticker] = float(decision_row[(ticker, decision_field)])
+                    price = float(decision_row[(ticker, decision_field)])
+                    if isfinite(price) and price > 0:
+                        decision_prices[ticker] = price
                 except KeyError:
                     continue
             if not decision_prices:
                 continue
             eligible_with_prices = [ticker for ticker in eligible_tickers if ticker in decision_prices]
+            if any(ticker not in decision_prices for ticker, shares in portfolio.positions.items() if shares != 0):
+                raise ValueError(f"Cannot value held positions on decision date {decision_date}: missing price")
 
             price_history = data_by_date.loc[:decision_date]
             raw_weights = strategy.compute_target_weights(
@@ -185,15 +218,18 @@ class BacktestEngine:
                 total_value=total_value,
                 min_notional=config.execution.min_order_notional,
                 cash_buffer_pct=config.execution.cash_buffer_pct,
+                fractional_shares=config.execution.fractional_shares,
                 decision_date=decision_date,
             )
             orders_list.extend(orders)
 
             fill_row = data_by_date.loc[fill_date]
             fill_prices = {}
-            for ticker in eligible_with_prices:
+            for ticker in tradable_tickers:
                 try:
-                    fill_prices[ticker] = float(fill_row[(ticker, fill_field)])
+                    price = float(fill_row[(ticker, fill_field)])
+                    if isfinite(price) and price > 0:
+                        fill_prices[ticker] = price
                 except KeyError:
                     continue
             if not fill_prices:
@@ -210,6 +246,7 @@ class BacktestEngine:
                 fill_date=fill_date,
                 slippage_bps=config.costs.slippage_bps,
                 commission=config.costs.commission_per_trade,
+                available_cash=portfolio.cash,
             )
             fills_list.extend(fills)
 
@@ -228,7 +265,14 @@ class BacktestEngine:
             portfolio_value_history.append(
                 {"date": fill_date, "total_value": portfolio_value}
             )
-            progress.update(fill_date)
+            if progress is not None:
+                progress.update(fill_date)
+            progress_reporter.emit(
+                "simulation", decision_number, len(schedule),
+                current_date=decision_date, fill_date=fill_date,
+                active_strategy=config.strategy.type,
+                message=f"Decision {decision_number} of {len(schedule)}",
+            )
             decision_log.append(
                 {
                     "decision_date": decision_date.isoformat(),
@@ -253,7 +297,9 @@ class BacktestEngine:
             if forecasts:
                 forecasts_list.extend(forecasts)
 
-        progress.finish()
+        if progress is not None:
+            progress.finish()
+        progress_reporter.emit("artifacts", 0, 1, message="Writing audit artifacts")
 
         portfolio_value_df = pd.DataFrame(portfolio_value_history)
         if not portfolio_value_df.empty:
@@ -291,14 +337,23 @@ class BacktestEngine:
         with (output_path / "metrics.json").open("w", encoding="utf-8") as handle:
             json.dump(metrics, handle, indent=2, sort_keys=True)
 
+        coverage = build_coverage_index(
+            data, tickers, source=config.data.source,
+            policy=config.data.coverage_policy,
+            proxy="SPY" if "SPY" in tickers else (tickers[0] if tickers else None),
+        )
+        progress_reporter.emit("artifacts", 1, 1, message="Audit artifacts complete")
         manifest = {
             "run_id": run_id,
             "config_hash": config_hash,
             "config_name": config.backtest.name,
             "data_checksums": self._load_checksums(config.data.cache_dir),
-            "status": "completed",
+            "status": "cancelled" if cancelled else "completed",
             "execution_time_seconds": (datetime.now(timezone.utc) - start_time).total_seconds(),
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "runtime": collect_runtime_info(decision_log),
+            "data_coverage": coverage.to_dict(),
+            "progress": progress_reporter.events,
         }
         with (output_path / "manifest.json").open("w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2, sort_keys=True)
@@ -309,6 +364,7 @@ class BacktestEngine:
             "output_path": str(output_path),
             "portfolio_value": portfolio_value_df,
             "config_hash": config_hash,
+            "status": manifest["status"],
         }
 
     @staticmethod

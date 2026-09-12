@@ -27,8 +27,8 @@ def _build_sample_data(tickers, dates: list[str]) -> pd.DataFrame:
 
     for i, _ in enumerate(index):
         for ticker in tickers:
-            data[(ticker, "Open")].iloc[i] = 100.0 + i
-            data[(ticker, "Close")].iloc[i] = 101.0 + i
+            data.loc[data.index[i], (ticker, "Open")] = 100.0 + i
+            data.loc[data.index[i], (ticker, "Close")] = 101.0 + i
 
     return data
 

@@ -33,8 +33,8 @@ def _build_sample_data(tickers, start: str, end: str) -> pd.DataFrame:
     for i, _ in enumerate(index):
         for j, ticker in enumerate(tickers):
             base = 100.0 + i * (j + 1)
-            data[(ticker, "Open")].iloc[i] = base
-            data[(ticker, "Close")].iloc[i] = base + 1.0
+            data.loc[data.index[i], (ticker, "Open")] = base
+            data.loc[data.index[i], (ticker, "Close")] = base + 1.0
 
     return data
 
@@ -175,4 +175,5 @@ def test_costs_applied(tmp_path, monkeypatch) -> None:
     fills = pd.read_parquet(Path(result["output_path"]) / "fills.parquet")
 
     assert (fills["slippage_cost"] > 0).all()
-    assert (fills["net_cost"] > fills["gross_value"]).all()
+    assert (fills["net_cost"] == fills["slippage_cost"] + fills["commission"]).all()
+    assert (fills["cash_flow"] < 0).any()

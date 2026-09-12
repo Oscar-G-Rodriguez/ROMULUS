@@ -1,6 +1,7 @@
 """Strategy module for ROMULUS."""
 
 from romulus.strategy.base import BaseStrategy
+from romulus.strategy.buy_and_hold import BuyAndHoldStrategy
 from romulus.strategy.cash_only import CashOnlyStrategy
 from romulus.strategy.deterministic import (
     InvVolStrategy,
@@ -16,6 +17,7 @@ from romulus.strategy.registry import create_strategy, get_strategy_registry
 
 __all__ = [
     "BaseStrategy",
+    "BuyAndHoldStrategy",
     "CashOnlyStrategy",
     "EqualWeightStrategy",
     "InvVolStrategy",

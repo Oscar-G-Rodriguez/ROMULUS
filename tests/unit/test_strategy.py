@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from romulus.strategy.cash_only import CashOnlyStrategy
+from romulus.strategy.buy_and_hold import BuyAndHoldStrategy
 from romulus.strategy.equal_weight import EqualWeightStrategy
 
 
@@ -58,3 +59,17 @@ def test_cash_only_returns_empty_weights() -> None:
     )
 
     assert weights == {}
+
+
+def test_buy_and_hold_preserves_drift_instead_of_rebalancing() -> None:
+    columns = pd.MultiIndex.from_product([["AAA", "BBB"], ["Close"]])
+    prices = pd.DataFrame([[120.0, 80.0]], columns=columns)
+    strategy = BuyAndHoldStrategy()
+
+    initial = strategy.compute_target_weights(date(2024, 1, 2), ["AAA", "BBB"], prices, {})
+    drifted = strategy.compute_target_weights(
+        date(2024, 1, 5), ["AAA", "BBB"], prices, {"AAA": 1.0, "BBB": 1.0}
+    )
+
+    assert initial == {"AAA": 0.5, "BBB": 0.5}
+    assert drifted == {"AAA": 0.6, "BBB": 0.4}

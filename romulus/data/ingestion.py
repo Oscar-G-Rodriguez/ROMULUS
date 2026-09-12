@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
+import numpy as np
 import yfinance as yf
 
 
@@ -85,3 +86,60 @@ def fetch_daily_data(
 
     combined = pd.concat(frames, axis=1).sort_index()
     return combined
+
+
+def load_cached_daily_data(tickers: List[str], start: str, end: str, cache_dir: str) -> pd.DataFrame:
+    """Load cached history without making a network request."""
+    frames: List[pd.DataFrame] = []
+    cache_path = Path(cache_dir)
+    for ticker in tickers:
+        parts = []
+        for path in sorted(cache_path.glob(f"{ticker}_*.parquet")):
+            parts.append(_normalize_columns(pd.read_parquet(path), ticker))
+        if not parts:
+            raise FileNotFoundError(f"No cached price data found for {ticker} in {cache_path}")
+        frame = pd.concat(parts).sort_index()
+        frame = frame[~frame.index.duplicated(keep="last")]
+        frame = frame.loc[pd.Timestamp(start):pd.Timestamp(end)]
+        if frame.empty:
+            raise ValueError(f"Cached data for {ticker} does not cover {start} to {end}")
+        frames.append(frame)
+    return pd.concat(frames, axis=1).sort_index()
+
+
+def generate_synthetic_daily_data(tickers: List[str], start: str, end: str) -> pd.DataFrame:
+    """Create deterministic, non-market OHLCV fixtures for offline demonstrations."""
+    index = pd.bdate_range(start, end)
+    frames: List[pd.DataFrame] = []
+    for ordinal, ticker in enumerate(tickers):
+        seed = int(hashlib.sha256(ticker.encode("utf-8")).hexdigest()[:8], 16)
+        rng = np.random.default_rng(seed)
+        cycle = np.sin(np.arange(len(index)) / (13.0 + ordinal)) * 0.0015
+        innovations = rng.normal(0.00015 + ordinal * 0.00001, 0.007 + ordinal * 0.0002, len(index))
+        close = 100.0 * np.exp(np.cumsum(innovations + cycle))
+        overnight = rng.normal(0.0, 0.0015, len(index))
+        open_price = close * np.exp(overnight)
+        spread = np.abs(rng.normal(0.003, 0.001, len(index)))
+        frame = pd.DataFrame(
+            {
+                "Open": open_price,
+                "Close": close,
+                "High": np.maximum(open_price, close) * (1.0 + spread),
+                "Low": np.minimum(open_price, close) * (1.0 - spread),
+                "Volume": 1_000_000 + rng.integers(0, 250_000, len(index)),
+            },
+            index=index,
+        )
+        frames.append(_normalize_columns(frame, ticker))
+    return pd.concat(frames, axis=1).sort_index() if frames else pd.DataFrame()
+
+
+def load_price_data(
+    tickers: List[str], start: str, end: str, cache_dir: str, source: str = "yfinance"
+) -> pd.DataFrame:
+    """Load the configured data source with explicit offline semantics."""
+    if source == "synthetic":
+        return generate_synthetic_daily_data(tickers, start, end)
+    if source == "cache":
+        return load_cached_daily_data(tickers, start, end, cache_dir)
+    return fetch_daily_data(tickers, start, end, cache_dir)

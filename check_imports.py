@@ -11,6 +11,7 @@ packages = [
     ("pytest", "pytest"),
     ("pandas_market_calendars", "pandas-market-calendars"),
     ("yaml", "pyyaml"),
+    ("xgboost", "xgboost"),
 ]
 
 missing = []
@@ -24,7 +25,7 @@ for import_name, package_name in packages:
 
 if missing:
     print(f"\nMissing packages: {', '.join(missing)}")
-    print(f"Install with: pip install {' '.join(missing)}")
+    print("Restore the locked environment with: uv sync --frozen")
     sys.exit(1)
 else:
     print("\nAll imports successful!")

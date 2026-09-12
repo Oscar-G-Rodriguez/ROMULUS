@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict, Tuple, Type
 
 from romulus.strategy.base import BaseStrategy
+from romulus.strategy.buy_and_hold import BuyAndHoldStrategy
 from romulus.strategy.cash_only import CashOnlyStrategy
 from romulus.strategy.deterministic import (
     InvVolStrategy,
@@ -27,6 +28,7 @@ StrategyEntry = Tuple[Type[BaseStrategy], str]
 def get_strategy_registry() -> Dict[str, StrategyEntry]:
     return {
         "equal_weight": (EqualWeightStrategy, "Equal-weight allocation across eligible tickers."),
+        "buy_and_hold": (BuyAndHoldStrategy, "Equal-weight initial purchase with no scheduled rebalancing."),
         "cash_only": (CashOnlyStrategy, "Hold 100% cash."),
         "inv_vol": (InvVolStrategy, "Inverse volatility weighting."),
         "ts_mom": (TsMomStrategy, "Time-series momentum with defensive cash."),

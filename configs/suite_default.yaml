@@ -12,6 +12,8 @@ strategies:
     type: "equal_weight"
   - name: "cash_only"
     type: "cash_only"
+  - name: "buy_and_hold"
+    type: "buy_and_hold"
   - name: "inv_vol"
     type: "inv_vol"
   - name: "ts_mom"
@@ -20,7 +22,33 @@ strategies:
     type: "xsec_mom"
   - name: "vol_target"
     type: "vol_target"
-  - name: "ml_risk_adjusted"
+  - name: "ma_crossover"
+    type: "ma_crossover"
+  - name: "ml_return_xgb"
+    type: "ml_return"
+    params:
+      model_family: "xgboost"
+      device: "auto"
+      refit_frequency: "every_n_decisions"
+      refit_n: 8
+      xgb_params: {n_estimators: 100}
+  - name: "ml_vol_xgb"
+    type: "ml_vol"
+    params:
+      model_family: "xgboost"
+      device: "auto"
+      refit_frequency: "every_n_decisions"
+      refit_n: 8
+      xgb_params: {n_estimators: 100}
+  - name: "ml_rar_xgb"
+    type: "ml_risk_adjusted"
+    params:
+      model_family: "xgboost"
+      device: "auto"
+      refit_frequency: "every_n_decisions"
+      refit_n: 8
+      xgb_params: {n_estimators: 100}
+  - name: "ml_rar_ridge"
     type: "ml_risk_adjusted"
     params:
       model_family: "ridge"
@@ -44,6 +72,7 @@ data:
   source: "yfinance"
   cache_dir: "data/cache"
   adjustment: "split_and_dividend"
+  coverage_policy: "dynamic"
 
 output:
   run_dir: "outputs/suite_runs"
@@ -57,17 +86,22 @@ leaderboard:
   window: 20
   dd_limit: -0.2
   turnover_limit: 1.0
+  regime_min_periods: 4
+  global_weight: 0.60
+  regime_weight: 0.40
 
 meta:
-  enabled: false
+  enabled: true
   min_periods_before_selection: 4
   baseline_strategy: "equal_weight"
+  selection_day: "friday"
+  switch_margin: 0.10
 
 ml:
   expanded: false
   rolling_windows: [252, 504, 756]
   expanding: true
   embargo_intervals: 1
-  macro_enabled: true
-  alt_enabled: true
+  macro_enabled: false
+  alt_enabled: false
   alt_sleep_seconds: 1.0

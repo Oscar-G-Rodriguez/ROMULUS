@@ -165,12 +165,27 @@ def fetch_pytrends_series(
     return combined
 
 
-def align_features_to_dates(df: pd.DataFrame, target_dates: Iterable) -> pd.DataFrame:
-    """Align feature frame to target dates with forward-fill."""
+def align_features_to_dates(
+    df: pd.DataFrame,
+    target_dates: Iterable,
+    availability_column: str = "available_date",
+) -> pd.DataFrame:
+    """Align features by publication/availability date, never observation date.
+
+    Point-in-time safety cannot be recovered from an observation timestamp.
+    Callers must supply an explicit availability date (for example from a
+    vintage-aware macro export); otherwise the feature is rejected.
+    """
     if df.empty:
         return df
-    target_index = pd.Index(list(target_dates))
+    if availability_column not in df.columns:
+        raise ValueError(
+            f"External features require an explicit {availability_column!r} column; "
+            "observation-date alignment is not point-in-time safe."
+        )
+    target_index = pd.Index(pd.to_datetime(list(target_dates)).date)
     aligned = df.copy()
-    aligned.index = pd.to_datetime(aligned.index).date
+    aligned.index = pd.to_datetime(aligned.pop(availability_column)).dt.date
+    aligned = aligned[~aligned.index.duplicated(keep="last")].sort_index()
     aligned = aligned.reindex(target_index, method="ffill").fillna(0.0)
     return aligned

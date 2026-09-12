@@ -62,3 +62,24 @@ def test_ml_training_rows_require_full_interval(monkeypatch) -> None:
     rows_late = strategy._build_training_rows(1, date(2024, 1, 9))
     assert len(rows_late) == 1
     assert rows_late[0][0] == date(2024, 1, 3)
+
+
+def test_ml_features_ignore_future_price_revisions() -> None:
+    index = pd.date_range("2023-01-01", periods=80, freq="B").date
+    fields = ["Open", "Close", "High", "Low", "Volume"]
+    columns = pd.MultiIndex.from_product([["SPY"], fields])
+    data = pd.DataFrame(index=index, columns=columns, dtype=float)
+    for i, day in enumerate(index):
+        value = 100.0 + i
+        data.loc[day, ("SPY", "Open")] = value
+        data.loc[day, ("SPY", "Close")] = value + 0.5
+        data.loc[day, ("SPY", "High")] = value + 1.0
+        data.loc[day, ("SPY", "Low")] = value - 1.0
+        data.loc[day, ("SPY", "Volume")] = 1_000_000 + i
+    as_of = index[70]
+    strategy = MLReturnStrategy()
+    strategy.set_context({"data_by_date": data, "costs": CostConfig()})
+    before = strategy._compute_feature_vector(data, "SPY", as_of)
+    data.loc[index[71]:, ("SPY", "Close")] = 1_000_000.0
+    after = strategy._compute_feature_vector(data, "SPY", as_of)
+    np.testing.assert_allclose(before, after)

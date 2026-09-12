@@ -165,6 +165,7 @@ def _interval_return(
 
 
 def _interval_vol(prices: pd.DataFrame, ticker: str, start: date, end: date) -> Optional[float]:
+    """Realized interval volatility as root-sum-square daily log returns."""
     try:
         series = _get_series(prices, ticker, "Close")
     except KeyError:
@@ -172,10 +173,11 @@ def _interval_vol(prices: pd.DataFrame, ticker: str, start: date, end: date) -> 
     slice_series = series.loc[start:end]
     if len(slice_series) < 2:
         return None
-    returns = slice_series.pct_change().dropna()
-    if returns.empty:
+    log_returns = np.log(slice_series.astype(float)).diff().dropna()
+    if log_returns.empty:
         return None
-    return float(returns.std())
+    realized = float(np.sqrt(np.square(log_returns).sum()))
+    return realized if np.isfinite(realized) else None
 
 
 def _macro_feature_values(
@@ -256,6 +258,17 @@ class RidgeModel:
         return X_design @ self.coef_
 
 
+@dataclass
+class XGBoostModel:
+    """Small native-Booster adapter with the strategy model interface."""
+
+    booster: object
+    xgboost: object
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self.booster.predict(self.xgboost.DMatrix(X))
+
+
 class MLBaseStrategy(BaseStrategy):
     """Base class for ML strategies."""
 
@@ -303,6 +316,7 @@ class MLBaseStrategy(BaseStrategy):
         self._last_training_info: dict = {}
         self._last_device: str = "cpu"
         self._last_fallback: Optional[str] = None
+        self._primary_label_type: str = "return"
         self._feature_names: List[str] = list(BASE_FEATURE_NAMES)
         self._feature_hash: str = _feature_hash(self._feature_names)
         self._macro_columns: List[str] = []
@@ -448,7 +462,7 @@ class MLBaseStrategy(BaseStrategy):
             try:
                 import xgboost as xgb
             except Exception as exc:
-                raise ValueError("xgboost is not installed; install with extras [ml]") from exc
+                raise ValueError("xgboost is unavailable; restore the locked environment with uv sync --frozen") from exc
 
             params = {
                 "objective": "reg:squarederror",
@@ -459,19 +473,44 @@ class MLBaseStrategy(BaseStrategy):
                 "colsample_bytree": 1.0,
                 "reg_lambda": 1.0,
                 "min_child_weight": 1.0,
-                "random_state": 42,
+                "seed": 42,
                 "nthread": 1,
                 "tree_method": "hist",
             }
             params.update(self.xgb_params)
 
+            num_boost_round = int(params.pop("n_estimators", 200))
+            params.pop("random_state", None)
+            params.pop("device", None)
+
             device_used = "cpu"
             fallback_reason = None
 
-            def train_with_device(device: str) -> xgb.XGBRegressor:
-                model = xgb.XGBRegressor(**params, device=device)
-                model.fit(X, y)
-                return model
+            def train_with_device(device: str, memory_conscious: bool = False) -> XGBoostModel:
+                train_params = dict(params)
+                train_params["device"] = device
+                if memory_conscious:
+                    train_params["max_bin"] = min(int(train_params.get("max_bin", 256)), 64)
+                    matrix = xgb.QuantileDMatrix(X, y, max_bin=train_params["max_bin"])
+                else:
+                    matrix = xgb.DMatrix(X, y)
+                booster = xgb.train(train_params, matrix, num_boost_round=num_boost_round)
+                return XGBoostModel(booster=booster, xgboost=xgb)
+
+            def train_cuda(device_name: str) -> tuple[XGBoostModel, Optional[str]]:
+                try:
+                    return train_with_device(device_name), None
+                except Exception as standard_exc:
+                    try:
+                        return (
+                            train_with_device(device_name, memory_conscious=True),
+                            f"standard CUDA attempt failed: {standard_exc}",
+                        )
+                    except Exception as retry_exc:
+                        raise ValueError(
+                            "CUDA standard and memory-conscious attempts failed: "
+                            f"{standard_exc}; {retry_exc}"
+                        ) from retry_exc
 
             if self.device == "cpu":
                 model = train_with_device("cpu")
@@ -479,27 +518,31 @@ class MLBaseStrategy(BaseStrategy):
             elif self.device == "cuda":
                 device_name = f"cuda:{self.cuda_ordinal}"
                 try:
-                    model = train_with_device(device_name)
+                    model, fallback_reason = train_cuda(device_name)
                 except Exception as exc:
                     raise ValueError(f"CUDA requested but unavailable: {exc}") from exc
                 device_used = device_name
             elif self.device == "auto":
+                device_name = f"cuda:{self.cuda_ordinal}"
                 try:
-                    device_name = f"cuda:{self.cuda_ordinal}"
-                    model = train_with_device(device_name)
+                    model, fallback_reason = train_cuda(device_name)
                     device_used = device_name
                 except Exception as exc:
-                    fallback_reason = str(exc)
+                    fallback_reason = f"CUDA unavailable; used CPU XGBoost: {exc}"
                     model = train_with_device("cpu")
                     device_used = "cpu"
             else:
                 raise ValueError(f"Unknown device setting: {self.device}")
 
-            return model, device_used, fallback_reason, params
+            params_used = dict(params)
+            params_used["num_boost_round"] = num_boost_round
+            params_used["device"] = device_used
+            return model, device_used, fallback_reason, params_used
 
         raise ValueError(f"Unknown model_family: {self.model_family}")
 
     def _fit(self, decision_index: int, as_of_date: date, label_type: str) -> None:
+        self._primary_label_type = label_type
         rows = self._build_training_rows(decision_index, as_of_date)
         data = self._context.get("data_by_date")
         if not rows or data is None:
@@ -530,7 +573,7 @@ class MLBaseStrategy(BaseStrategy):
             if label is None:
                 continue
             X.append(features)
-            y.append(label)
+            y.append(np.log(max(label, 0.0) + 1e-8) if label_type == "vol" else label)
 
         if len(y) < self.min_train_rows:
             self._model = None
@@ -580,6 +623,8 @@ class MLBaseStrategy(BaseStrategy):
             if features is None:
                 continue
             pred = float(self._model.predict(np.array([features]))[0])
+            if self._primary_label_type == "vol":
+                pred = max(0.0, float(np.exp(pred) - 1e-8))
             predictions[ticker] = pred
         return predictions
 
@@ -820,7 +865,7 @@ class MLRiskAdjustedStrategy(MLBaseStrategy):
             if label is None:
                 continue
             X.append(features)
-            y.append(label)
+            y.append(np.log(max(label, 0.0) + 1e-8))
 
         if len(y) < self.min_train_rows:
             self._model_vol = None
@@ -839,6 +884,9 @@ class MLRiskAdjustedStrategy(MLBaseStrategy):
             features = self._compute_feature_vector(data, ticker, as_of_date)
             if features is None:
                 continue
-            pred = float(self._model_vol.predict(np.array([features]))[0])
+            pred = max(
+                0.0,
+                float(np.exp(float(self._model_vol.predict(np.array([features]))[0])) - 1e-8),
+            )
             predictions[ticker] = pred
         return predictions

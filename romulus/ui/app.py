@@ -1,310 +1,494 @@
-"""Tkinter desktop UI for ROMULUS (no localhost required)."""
+"""Complete native desktop workflow for ROMULUS (no localhost required)."""
 
 from __future__ import annotations
 
 import contextlib
 import json
+import os
 import queue
 import threading
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
+import yaml
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from romulus.backtest.engine import BacktestEngine
+from romulus.backtest.progress import ProgressEvent
 from romulus.backtest.suite import SuiteRunner
+from romulus.calendar.trading_days import get_trading_days
 from romulus.cli.main import resolve_default_config_path
-from romulus.config.schema import load_config, load_suite_config
-
-
-@dataclass
-class RunRequest:
-    config_path: Optional[str]
-    start_date: Optional[str]
-    end_date: Optional[str]
-    suite: bool
+from romulus.config.schema import SuiteConfig, load_config, load_suite_config
+from romulus.data.coverage import build_coverage_index, inspect_cached_coverage
+from romulus.data.ingestion import fetch_daily_data, generate_synthetic_daily_data
+from romulus.data.universe import Universe
+from romulus.runtime import collect_runtime_info, run_xgboost_device_diagnostic
+from romulus.ui.presenters import RunPresenter
 
 
 class QueueWriter:
-    """Redirects stdout/stderr to a queue for UI display."""
+    def __init__(self, output: queue.Queue[tuple[str, object]]) -> None:
+        self.output = output
 
-    def __init__(self, output: queue.Queue[str]) -> None:
-        self._queue = output
-
-    def write(self, text: str) -> None:
-        if not text:
-            return
-        self._queue.put(text)
+    def write(self, value: str) -> None:
+        if value:
+            self.output.put(("log", value))
 
     def flush(self) -> None:
         return
 
 
 class RomulusUI:
-    """Main UI window."""
+    """ROMULUS setup, execution, comparison, and audit application."""
 
     def __init__(self) -> None:
-        self._root = tk.Tk()
-        self._root.title("ROMULUS")
-        self._root.geometry("1100x700")
+        self.root = tk.Tk()
+        self.root.title("ROMULUS — Regime-Aware Strategy Laboratory")
+        self.root.geometry("1320x820")
+        self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.cancel_event = threading.Event()
+        self.running = False
+        self.coverage_ready = False
+        self.current_run: Optional[Path] = None
+        self.presenter: Optional[RunPresenter] = None
 
-        self._output_queue: queue.Queue[str] = queue.Queue()
-        self._progress_text = tk.StringVar(value="Idle")
+        self.status = tk.StringVar(value="Idle")
+        self.current_date = tk.StringVar(value="No run active")
+        self.progress_detail = tk.StringVar(value="0 of 0 decisions")
+        self.progress_percent = tk.DoubleVar(value=0.0)
+        self.config_path = tk.StringVar()
+        self.data_source = tk.StringVar(value="synthetic")
+        self.coverage_policy = tk.StringVar(value="dynamic")
+        self.start_date = tk.StringVar()
+        self.end_date = tk.StringVar()
+        self.coverage_text = tk.StringVar(value="Inspect data before selecting dates.")
 
-        self._build_layout()
-        self._poll_output()
+        self._build()
+        self._load_default_config()
+        self._refresh_runs()
+        self.root.after(100, self._poll)
 
     def run(self) -> None:
-        self._root.mainloop()
+        self.root.mainloop()
 
-    def _build_layout(self) -> None:
-        notebook = ttk.Notebook(self._root)
+    def _build(self) -> None:
+        notebook = ttk.Notebook(self.root)
         notebook.pack(fill=tk.BOTH, expand=True)
+        self.notebook = notebook
+        self.tabs = {}
+        for name in ("Setup", "Run", "Overview", "Champion Timeline", "ML Accuracy", "Decision Audit", "Runs", "Diagnostics"):
+            frame = ttk.Frame(notebook)
+            self.tabs[name] = frame
+            notebook.add(frame, text=name)
+        self._build_setup(self.tabs["Setup"])
+        self._build_run(self.tabs["Run"])
+        self.overview_canvas = tk.Canvas(self.tabs["Overview"], height=230, background="white", highlightthickness=0)
+        self.overview_canvas.pack(fill=tk.X, padx=10, pady=(10, 0))
+        self.overview_tree = self._table(self.tabs["Overview"], (
+            "strategy", "total_return_pct", "cagr_pct", "annualized_volatility", "sharpe", "max_drawdown_pct", "turnover", "cost_drag"
+        ))
+        self.champion_tree = self._table(self.tabs["Champion Timeline"], (
+            "decision_date", "fill_date", "market_regime", "incumbent", "challenger", "selected_strategy", "switched", "score_margin", "switch_reason"
+        ))
+        self.champion_tree.bind("<<TreeviewSelect>>", self._champion_selected)
+        self.ml_tree = self._table(self.tabs["ML Accuracy"], (
+            "strategy", "model_family", "target", "split", "series", "observations", "mae", "rmse", "directional_accuracy", "mean_rank_correlation", "top_selection_hit_rate"
+        ))
+        self.audit_text = tk.Text(self.tabs["Decision Audit"], wrap="word")
+        self.audit_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self._build_runs(self.tabs["Runs"])
+        self._build_diagnostics(self.tabs["Diagnostics"])
+        ttk.Label(self.root, textvariable=self.status, anchor="w").pack(fill=tk.X, side=tk.BOTTOM)
 
-        self._run_tab = ttk.Frame(notebook)
-        self._suite_tab = ttk.Frame(notebook)
-        self._runs_tab = ttk.Frame(notebook)
-
-        notebook.add(self._run_tab, text="Run")
-        notebook.add(self._suite_tab, text="Suite")
-        notebook.add(self._runs_tab, text="Runs")
-
-        self._build_run_tab(self._run_tab, suite=False)
-        self._build_run_tab(self._suite_tab, suite=True)
-        self._build_runs_tab(self._runs_tab)
-
-        status = ttk.Label(self._root, textvariable=self._progress_text, anchor="w")
-        status.pack(fill=tk.X, side=tk.BOTTOM)
-
-    def _build_run_tab(self, parent: ttk.Frame, suite: bool) -> None:
-        frame = ttk.Frame(parent, padding=12)
+    def _build_setup(self, parent: ttk.Frame) -> None:
+        frame = ttk.Frame(parent, padding=14)
         frame.pack(fill=tk.BOTH, expand=True)
-
-        row = 0
-        ttk.Label(frame, text="Config path:").grid(row=row, column=0, sticky="w")
-        config_entry = ttk.Entry(frame, width=80)
-        config_entry.grid(row=row, column=1, sticky="ew")
-        browse_button = ttk.Button(
+        frame.columnconfigure(1, weight=1)
+        ttk.Label(frame, text="Suite configuration").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.config_path).grid(row=0, column=1, sticky="ew", padx=8)
+        ttk.Button(frame, text="Browse", command=self._browse_config).grid(row=0, column=2)
+        ttk.Label(frame, text="Data source").grid(row=1, column=0, sticky="w", pady=8)
+        source = ttk.Combobox(frame, textvariable=self.data_source, values=("synthetic", "cache", "yfinance"), state="readonly")
+        source.grid(row=1, column=1, sticky="w", padx=8)
+        source.bind("<<ComboboxSelected>>", lambda _event: self._invalidate_coverage())
+        ttk.Label(frame, text="Coverage policy").grid(row=2, column=0, sticky="w")
+        policy = ttk.Combobox(frame, textvariable=self.coverage_policy, values=("dynamic", "common"), state="readonly")
+        policy.grid(row=2, column=1, sticky="w", padx=8)
+        policy.bind("<<ComboboxSelected>>", lambda _event: self._invalidate_coverage())
+        controls = ttk.Frame(frame)
+        controls.grid(row=3, column=0, columnspan=3, sticky="w", pady=10)
+        ttk.Button(controls, text="Inspect Coverage", command=self._inspect_coverage).pack(side=tk.LEFT)
+        ttk.Button(controls, text="Download Configured Range", command=self._download_coverage).pack(side=tk.LEFT, padx=8)
+        ttk.Label(frame, text="Start date").grid(row=4, column=0, sticky="w")
+        self.start_picker = ttk.Combobox(frame, textvariable=self.start_date, state="disabled", width=16)
+        self.start_picker.grid(row=4, column=1, sticky="w", padx=8)
+        ttk.Label(frame, text="End date").grid(row=5, column=0, sticky="w", pady=8)
+        self.end_picker = ttk.Combobox(frame, textvariable=self.end_date, state="disabled", width=16)
+        self.end_picker.grid(row=5, column=1, sticky="w", padx=8)
+        ttk.Label(frame, textvariable=self.coverage_text, justify=tk.LEFT, wraplength=1100).grid(
+            row=6, column=0, columnspan=3, sticky="nw", pady=12
+        )
+        ttk.Label(
             frame,
-            text="Browse",
-            command=lambda: self._browse_config(config_entry),
-        )
-        browse_button.grid(row=row, column=2, padx=6)
+            text="Dynamic eligibility admits later-inception assets when valid; common overlap waits for every selected asset.",
+            foreground="#555555",
+        ).grid(row=7, column=0, columnspan=3, sticky="w")
+        editor_controls = ttk.Frame(frame)
+        editor_controls.grid(row=8, column=0, columnspan=3, sticky="w", pady=(14, 4))
+        ttk.Label(editor_controls, text="Advanced configuration (all engine settings)").pack(side=tk.LEFT)
+        ttk.Button(editor_controls, text="Validate", command=self._validate_editor).pack(side=tk.LEFT, padx=8)
+        ttk.Button(editor_controls, text="Save As…", command=self._save_config).pack(side=tk.LEFT)
+        self.config_editor = tk.Text(frame, height=19, wrap="none")
+        self.config_editor.grid(row=9, column=0, columnspan=3, sticky="nsew")
+        frame.rowconfigure(9, weight=1)
 
-        default_candidates = (
-            [Path("configs/suite_default.yaml"), Path("configs/default.yaml")]
-            if suite
-            else [Path("configs/etf_equal_weight.yaml"), Path("configs/default.yaml")]
-        )
-        default_path = resolve_default_config_path(candidates=default_candidates)
-        if default_path:
-            config_entry.insert(0, str(default_path))
-
-        row += 1
-        ttk.Label(frame, text="Start date (YYYY-MM-DD):").grid(row=row, column=0, sticky="w")
-        start_entry = ttk.Entry(frame)
-        start_entry.grid(row=row, column=1, sticky="w")
-
-        row += 1
-        ttk.Label(frame, text="End date (YYYY-MM-DD):").grid(row=row, column=0, sticky="w")
-        end_entry = ttk.Entry(frame)
-        end_entry.grid(row=row, column=1, sticky="w")
-
-        row += 1
-        run_button = ttk.Button(
-            frame,
-            text="Run Suite" if suite else "Run Backtest",
-            command=lambda: self._submit_run(
-                RunRequest(
-                    config_path=config_entry.get().strip() or None,
-                    start_date=start_entry.get().strip() or None,
-                    end_date=end_entry.get().strip() or None,
-                    suite=suite,
-                ),
-                run_button,
-            ),
-        )
-        run_button.grid(row=row, column=0, pady=8)
-
-        row += 1
-        ttk.Label(frame, text="Log:").grid(row=row, column=0, sticky="w", pady=(10, 0))
-        row += 1
-        log_box = tk.Text(frame, height=18, wrap="word")
-        log_box.grid(row=row, column=0, columnspan=3, sticky="nsew")
-
-        scrollbar = ttk.Scrollbar(frame, command=log_box.yview)
-        scrollbar.grid(row=row, column=3, sticky="ns")
-        log_box.configure(yscrollcommand=scrollbar.set)
-
-        frame.grid_columnconfigure(1, weight=1)
-        frame.grid_rowconfigure(row, weight=1)
-
-        if suite:
-            self._suite_log = log_box
-        else:
-            self._run_log = log_box
-
-    def _build_runs_tab(self, parent: ttk.Frame) -> None:
-        frame = ttk.Frame(parent, padding=12)
+    def _build_run(self, parent: ttk.Frame) -> None:
+        frame = ttk.Frame(parent, padding=14)
         frame.pack(fill=tk.BOTH, expand=True)
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill=tk.X)
+        self.run_button = ttk.Button(buttons, text="Run ROMULUS Suite", command=self._start_run, state="disabled")
+        self.run_button.pack(side=tk.LEFT)
+        self.cancel_button = ttk.Button(buttons, text="Cancel Safely", command=self.cancel_event.set, state="disabled")
+        self.cancel_button.pack(side=tk.LEFT, padx=8)
+        ttk.Label(frame, textvariable=self.current_date, font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(18, 4))
+        ttk.Label(frame, textvariable=self.progress_detail).pack(anchor="w")
+        ttk.Progressbar(frame, variable=self.progress_percent, maximum=100).pack(fill=tk.X, pady=10)
+        self.run_log = tk.Text(frame, height=28, wrap="word")
+        self.run_log.pack(fill=tk.BOTH, expand=True)
 
+    def _build_runs(self, parent: ttk.Frame) -> None:
+        frame = ttk.Frame(parent, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
         left = ttk.Frame(frame)
-        right = ttk.Frame(frame)
         left.pack(side=tk.LEFT, fill=tk.Y)
-        right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.runs_list = tk.Listbox(left, width=44)
+        self.runs_list.pack(fill=tk.BOTH, expand=True)
+        self.runs_list.bind("<<ListboxSelect>>", self._run_selected)
+        ttk.Button(left, text="Refresh", command=self._refresh_runs).pack(fill=tk.X, pady=6)
+        ttk.Button(left, text="Open Artifact Folder", command=self._open_artifacts).pack(fill=tk.X)
+        self.run_details = tk.Text(frame, wrap="word")
+        self.run_details.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(12, 0))
 
-        ttk.Label(left, text="Runs:").pack(anchor="w")
-        self._runs_list = tk.Listbox(left, width=45)
-        self._runs_list.pack(fill=tk.Y, expand=True, side=tk.LEFT)
-        scrollbar = ttk.Scrollbar(left, command=self._runs_list.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self._runs_list.configure(yscrollcommand=scrollbar.set)
+    def _build_diagnostics(self, parent: ttk.Frame) -> None:
+        frame = ttk.Frame(parent, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        controls = ttk.Frame(frame)
+        controls.pack(fill=tk.X)
+        ttk.Button(controls, text="Refresh Environment", command=self._refresh_diagnostics).pack(side=tk.LEFT)
+        self.cuda_button = ttk.Button(controls, text="Test XGBoost CUDA", command=self._start_cuda_test)
+        self.cuda_button.pack(side=tk.LEFT, padx=8)
+        self.diagnostics_text = tk.Text(frame, wrap="word")
+        self.diagnostics_text.pack(fill=tk.BOTH, expand=True, pady=10)
+        self._refresh_diagnostics()
 
-        refresh = ttk.Button(left, text="Refresh", command=self._refresh_runs)
-        refresh.pack(pady=6)
+    @staticmethod
+    def _table(parent: ttk.Frame, columns: tuple[str, ...]) -> ttk.Treeview:
+        container = ttk.Frame(parent, padding=8)
+        container.pack(fill=tk.BOTH, expand=True)
+        tree = ttk.Treeview(container, columns=columns, show="headings")
+        xbar = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=tree.xview)
+        ybar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(xscrollcommand=xbar.set, yscrollcommand=ybar.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        ybar.grid(row=0, column=1, sticky="ns")
+        xbar.grid(row=1, column=0, sticky="ew")
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+        for column in columns:
+            tree.heading(column, text=column.replace("_", " ").title())
+            tree.column(column, width=145, anchor="w")
+        return tree
 
-        ttk.Label(right, text="Run details:").pack(anchor="w")
-        self._run_details = tk.Text(right, wrap="word")
-        self._run_details.pack(fill=tk.BOTH, expand=True)
-
-        self._runs_list.bind("<<ListboxSelect>>", self._show_run_details)
-        self._refresh_runs()
-
-    def _browse_config(self, entry: ttk.Entry) -> None:
-        path = filedialog.askopenfilename(
-            title="Select config file",
-            filetypes=[("YAML files", "*.yaml *.yml"), ("All files", "*.*")],
-        )
+    def _load_default_config(self) -> None:
+        path = resolve_default_config_path(candidates=[Path("configs/suite_default.yaml")])
         if path:
-            entry.delete(0, tk.END)
-            entry.insert(0, path)
+            self.config_path.set(str(path))
+            try:
+                config = load_suite_config(str(path))
+                self.config_editor.delete("1.0", tk.END)
+                self.config_editor.insert("1.0", Path(path).read_text(encoding="utf-8"))
+                self.data_source.set(config.data.source)
+                self.coverage_policy.set(config.data.coverage_policy)
+            except Exception:
+                pass
 
-    def _submit_run(self, request: RunRequest, button: ttk.Button) -> None:
-        if self._is_running():
-            messagebox.showwarning("ROMULUS", "A run is already in progress.")
+    def _browse_config(self) -> None:
+        path = filedialog.askopenfilename(filetypes=[("YAML", "*.yaml *.yml"), ("All files", "*.*")])
+        if path:
+            self.config_path.set(path)
+            self.config_editor.delete("1.0", tk.END)
+            self.config_editor.insert("1.0", Path(path).read_text(encoding="utf-8"))
+            self._invalidate_coverage()
+
+    def _invalidate_coverage(self) -> None:
+        self.coverage_ready = False
+        self.start_picker.configure(state="disabled")
+        self.end_picker.configure(state="disabled")
+        self.run_button.configure(state="disabled")
+        self.coverage_text.set("Coverage changed. Inspect data again before running.")
+
+    def _coverage_inputs(self):
+        config = self._config_from_editor()
+        universe = Universe.load_from_json(config.universe.source)
+        return config, universe.get_all_tickers()
+
+    def _config_from_editor(self) -> SuiteConfig:
+        raw = yaml.safe_load(self.config_editor.get("1.0", tk.END))
+        return SuiteConfig(**raw)
+
+    def _validate_editor(self) -> None:
+        try:
+            self._config_from_editor()
+            messagebox.showinfo("Configuration", "Configuration is valid.")
+            self._invalidate_coverage()
+        except Exception as exc:
+            messagebox.showerror("Configuration", str(exc))
+
+    def _save_config(self) -> None:
+        try:
+            config = self._config_from_editor()
+            path = filedialog.asksaveasfilename(defaultextension=".yaml", filetypes=[("YAML", "*.yaml")])
+            if path:
+                Path(path).write_text(yaml.safe_dump(config.model_dump(), sort_keys=False), encoding="utf-8")
+                self.config_path.set(path)
+        except Exception as exc:
+            messagebox.showerror("Configuration", str(exc))
+
+    def _inspect_coverage(self) -> None:
+        try:
+            config, tickers = self._coverage_inputs()
+            source = self.data_source.get()
+            policy = self.coverage_policy.get()
+            if source == "synthetic":
+                data = generate_synthetic_daily_data(tickers, config.backtest.start_date, config.backtest.end_date)
+                coverage = build_coverage_index(
+                    data, tickers, source="synthetic", policy=policy, minimum_observations=64
+                )
+            else:
+                coverage = inspect_cached_coverage(
+                    config.data.cache_dir, tickers, policy=policy, minimum_observations=64
+                )
+            if coverage.minimum_date is None or coverage.maximum_date is None:
+                raise ValueError("No complete cached coverage found. Download the configured range or choose Synthetic.")
+            dates = [item.isoformat() for item in get_trading_days(coverage.minimum_date, coverage.maximum_date)]
+            self.start_picker.configure(values=dates, state="readonly")
+            self.end_picker.configure(values=dates, state="readonly")
+            self.start_date.set(max(config.backtest.start_date, coverage.minimum_date))
+            self.end_date.set(min(config.backtest.end_date, coverage.maximum_date))
+            gaps = sum(item.gap_count for item in coverage.tickers)
+            if gaps:
+                raise ValueError(
+                    f"Coverage contains {gaps} unresolved required-price gaps; repair the cache before running."
+                )
+            self.coverage_text.set(
+                f"Usable range: {coverage.minimum_date} to {coverage.maximum_date}\n"
+                f"Policy: {policy}; proxy: {coverage.proxy}; tickers: {len(coverage.tickers)}; business-day gaps flagged: {gaps}"
+            )
+            self.coverage_ready = True
+            self.run_button.configure(state="normal")
+        except Exception as exc:
+            messagebox.showerror("Coverage inspection", str(exc))
+
+    def _download_coverage(self) -> None:
+        if self.data_source.get() != "yfinance":
+            messagebox.showinfo("Data", "Downloading is only used for the yfinance source.")
             return
+        if self.running:
+            return
+        try:
+            config, tickers = self._coverage_inputs()
+        except Exception as exc:
+            messagebox.showerror("Configuration", str(exc))
+            return
+        self.running = True
+        self.status.set("Downloading configured market-data range…")
+        def worker() -> None:
+            try:
+                fetch_daily_data(tickers, config.backtest.start_date, config.backtest.end_date, config.data.cache_dir)
+                self.events.put(("download_complete", None))
+            except Exception as exc:
+                self.events.put(("error", str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
 
-        button.state(["disabled"])
-        self._progress_text.set("Running...")
-        target = self._run_suite if request.suite else self._run_backtest
+    def _start_run(self) -> None:
+        if self.running or not self.coverage_ready:
+            return
+        if self.start_date.get() > self.end_date.get():
+            messagebox.showerror("Dates", "Start date must not be after end date.")
+            return
+        try:
+            config = self._config_from_editor()
+            config.backtest.start_date = self.start_date.get()
+            config.backtest.end_date = self.end_date.get()
+            config.data.source = self.data_source.get()
+            config.data.coverage_policy = self.coverage_policy.get()
+            self.pending_config = config
+        except Exception as exc:
+            messagebox.showerror("Configuration", str(exc))
+            return
+        self.running = True
+        self.cancel_event.clear()
+        self.run_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.progress_percent.set(0)
+        self.run_log.delete("1.0", tk.END)
+        self.status.set("Running")
+        self.notebook.select(self.tabs["Run"])
+        threading.Thread(target=self._execute_run, daemon=True).start()
 
-        thread = threading.Thread(target=target, args=(request, button), daemon=True)
-        thread.start()
-
-    def _run_backtest(self, request: RunRequest, button: ttk.Button) -> None:
-        self._execute_run(request, button, suite=False)
-
-    def _run_suite(self, request: RunRequest, button: ttk.Button) -> None:
-        self._execute_run(request, button, suite=True)
-
-    def _execute_run(self, request: RunRequest, button: ttk.Button, suite: bool) -> None:
-        writer = QueueWriter(self._output_queue)
+    def _execute_run(self) -> None:
+        writer = QueueWriter(self.events)
         with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
             try:
-                config_path = self._resolve_config(request, suite)
-                if config_path is None:
-                    self._output_queue.put("No config path provided.\n")
-                    return
-
-                if suite:
-                    config = load_suite_config(str(config_path))
-                else:
-                    config = load_config(str(config_path))
-
-                if request.start_date:
-                    config.backtest.start_date = request.start_date
-                if request.end_date:
-                    config.backtest.end_date = request.end_date
-
-                self._output_queue.put(f"Using config: {config_path}\n")
-                self._output_queue.put("Starting run...\n")
-
-                if suite:
-                    result = SuiteRunner().run(config)
-                else:
-                    result = BacktestEngine().run(config)
-
-                self._output_queue.put(json.dumps(result, indent=2, default=str) + "\n")
-                self._output_queue.put("Run complete.\n")
+                result = SuiteRunner().run(
+                    self.pending_config,
+                    progress_callback=lambda event: self.events.put(("progress", event)),
+                    cancel_requested=self.cancel_event.is_set,
+                )
+                self.events.put(("complete", result))
             except Exception as exc:
-                self._output_queue.put(f"Error: {exc}\n")
-            finally:
-                button.state(["!disabled"])
-                self._progress_text.set("Idle")
+                self.events.put(("error", f"{type(exc).__name__}: {exc}"))
+
+    def _poll(self) -> None:
+        while not self.events.empty():
+            kind, payload = self.events.get()
+            if kind == "log":
+                self.run_log.insert(tk.END, str(payload))
+                self.run_log.see(tk.END)
+            elif kind == "progress":
+                self._show_progress(payload)
+            elif kind == "complete":
+                result = dict(payload)
+                self.running = False
+                self.cancel_button.configure(state="disabled")
+                self.run_button.configure(state="normal")
+                self.status.set(str(result.get("status", "completed")).title())
                 self._refresh_runs()
+                self._load_run(Path(result["output_path"]))
+            elif kind == "download_complete":
+                self.running = False
+                self.status.set("Download complete")
+                self._inspect_coverage()
+            elif kind == "diagnostic":
+                self.running = False
+                self.cuda_button.configure(state="normal")
+                self.status.set("Idle")
+                self.diagnostics_text.delete("1.0", tk.END)
+                self.diagnostics_text.insert("1.0", json.dumps(payload, indent=2, default=str))
+            elif kind == "error":
+                self.running = False
+                self.cancel_button.configure(state="disabled")
+                self.run_button.configure(state="normal" if self.coverage_ready else "disabled")
+                self.status.set("Failed")
+                messagebox.showerror("ROMULUS", str(payload))
+        self.root.after(100, self._poll)
 
-    def _resolve_config(self, request: RunRequest, suite: bool) -> Optional[Path]:
-        if request.config_path:
-            return Path(request.config_path)
-        candidates = (
-            [Path("configs/suite_default.yaml"), Path("configs/default.yaml")]
-            if suite
-            else [Path("configs/etf_equal_weight.yaml"), Path("configs/default.yaml")]
-        )
-        return resolve_default_config_path(candidates=candidates)
-
-    def _poll_output(self) -> None:
-        while not self._output_queue.empty():
-            text = self._output_queue.get()
-            target = self._suite_log if "suite" in text.lower() else self._run_log
-            target.insert(tk.END, text)
-            target.see(tk.END)
-            if "progress:" in text:
-                self._progress_text.set(text.strip().replace("\r", ""))
-        self._root.after(100, self._poll_output)
+    def _show_progress(self, event: ProgressEvent) -> None:
+        self.progress_percent.set(event.overall_percent)
+        self.status.set(event.stage.replace("_", " ").title())
+        self.current_date.set(f"Processing {event.current_date}" if event.current_date else event.message)
+        eta = f" • ETA {event.eta_seconds:.0f}s" if event.eta_seconds is not None else ""
+        strategy = f" • {event.active_strategy}" if event.active_strategy else ""
+        self.progress_detail.set(f"{event.completed} of {event.total} • {event.overall_percent:.1f}%{strategy}{eta}")
 
     def _refresh_runs(self) -> None:
-        self._runs_list.delete(0, tk.END)
-        run_dirs = []
-        for base in (Path("outputs/runs"), Path("outputs/suite_runs")):
+        self.runs_list.delete(0, tk.END)
+        runs = []
+        for base in (
+            Path("outputs/suite_runs"),
+            Path("outputs/runs"),
+            Path("outputs/offline_demo/suite_runs"),
+        ):
             if base.exists():
-                run_dirs.extend([path for path in base.iterdir() if path.is_dir()])
+                runs.extend(path for path in base.iterdir() if path.is_dir())
+        self.run_paths = sorted(runs, key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in self.run_paths:
+            self.runs_list.insert(tk.END, f"{path.name}  [{path.parent.name}]")
 
-        run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        self._runs_index = run_dirs
-        for path in run_dirs:
-            self._runs_list.insert(tk.END, path.name)
+    def _run_selected(self, _event: object) -> None:
+        selection = self.runs_list.curselection()
+        if selection:
+            self._load_run(self.run_paths[selection[0]])
 
-    def _show_run_details(self, _event: object) -> None:
-        selection = self._runs_list.curselection()
-        if not selection:
+    def _load_run(self, path: Path) -> None:
+        self.current_run = path
+        self.presenter = RunPresenter(path)
+        self.run_details.delete("1.0", tk.END)
+        self.run_details.insert("1.0", self.presenter.status_text())
+        self._fill_tree(self.overview_tree, self.presenter.overview_rows())
+        self._draw_equity(self.presenter.equity_series())
+        self._fill_tree(self.champion_tree, self.presenter.champion_rows())
+        self._fill_tree(self.ml_tree, self.presenter.ml_rows())
+
+    @staticmethod
+    def _fill_tree(tree: ttk.Treeview, rows: list[dict]) -> None:
+        tree.delete(*tree.get_children())
+        columns = tree["columns"]
+        for row in rows:
+            values = []
+            for column in columns:
+                value = row.get(column)
+                if isinstance(value, float):
+                    value = f"{value:.6g}"
+                values.append("" if value is None else value)
+            tree.insert("", tk.END, values=values)
+
+    def _draw_equity(self, series: dict[str, list[tuple[str, float]]]) -> None:
+        canvas = self.overview_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 900)
+        height = 230
+        margin = 35
+        colors = ("#2b6cb0", "#c53030", "#2f855a", "#805ad5", "#d69e2e", "#319795", "#718096")
+        canvas.create_text(margin, 12, text="Normalized portfolio value (simulation)", anchor="w")
+        for idx, (name, points) in enumerate(sorted(series.items())):
+            if len(points) < 2 or points[0][1] == 0:
+                continue
+            values = [value / points[0][1] for _, value in points]
+            all_values = [value / rows[0][1] for rows in series.values() if rows and rows[0][1] for _, value in rows]
+            low, high = min(all_values), max(all_values)
+            span = max(high - low, 1e-9)
+            coords = []
+            for point_index, value in enumerate(values):
+                x = margin + point_index * (width - 2 * margin) / max(1, len(values) - 1)
+                y = height - margin - (value - low) * (height - 2 * margin) / span
+                coords.extend((x, y))
+            color = colors[idx % len(colors)]
+            canvas.create_line(*coords, fill=color, width=2)
+            canvas.create_text(width - margin, 20 + idx * 15, text=name, fill=color, anchor="e")
+
+    def _champion_selected(self, _event: object) -> None:
+        if self.presenter is None:
             return
-        index = selection[0]
-        run_path = self._runs_index[index]
-        details = self._collect_run_details(run_path)
-        self._run_details.delete("1.0", tk.END)
-        self._run_details.insert(tk.END, details)
+        selected = self.champion_tree.selection()
+        if not selected:
+            return
+        decision_date = str(self.champion_tree.item(selected[0], "values")[0])
+        audit = self.presenter.decision_audit(decision_date)
+        self.audit_text.delete("1.0", tk.END)
+        self.audit_text.insert("1.0", json.dumps(audit, indent=2, default=str))
+        self.notebook.select(self.tabs["Decision Audit"])
 
-    def _collect_run_details(self, run_path: Path) -> str:
-        parts = [f"Run: {run_path.name}", f"Path: {run_path}"]
-        manifest_path = run_path / "manifest.json"
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            parts.append(f"Created: {manifest.get('created_at')}")
-            parts.append(f"Config: {manifest.get('config_name')}")
-            parts.append(f"Config hash: {manifest.get('config_hash')}")
+    def _open_artifacts(self) -> None:
+        if self.current_run is not None:
+            os.startfile(self.current_run)  # type: ignore[attr-defined]
 
-        metrics_path = run_path / "metrics.json"
-        if metrics_path.exists():
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-            parts.append("Metrics:")
-            for key, value in metrics.items():
-                parts.append(f"  {key}: {value}")
+    def _refresh_diagnostics(self) -> None:
+        self.diagnostics_text.delete("1.0", tk.END)
+        self.diagnostics_text.insert("1.0", json.dumps(collect_runtime_info(), indent=2, default=str))
 
-        suite_summary = run_path / "suite_summary.json"
-        if suite_summary.exists():
-            summary = json.loads(suite_summary.read_text(encoding="utf-8"))
-            best = summary.get("best_overall")
-            if best:
-                parts.append(f"Best strategy: {best.get('strategy')}")
-
-        return "\n".join(parts)
-
-    def _is_running(self) -> bool:
-        return self._progress_text.get().startswith("Running")
+    def _start_cuda_test(self) -> None:
+        if self.running:
+            return
+        self.running = True
+        self.cuda_button.configure(state="disabled")
+        self.status.set("Testing XGBoost CUDA")
+        def worker() -> None:
+            result = run_xgboost_device_diagnostic()
+            self.events.put(("diagnostic", {"environment": collect_runtime_info(), "diagnostic": result}))
+        threading.Thread(target=worker, daemon=True).start()
 
 
 def run_headless(
@@ -313,7 +497,6 @@ def run_headless(
     end_date: Optional[str] = None,
     suite: bool = False,
 ) -> dict:
-    request = RunRequest(config_path=config_path, start_date=start_date, end_date=end_date, suite=suite)
     if suite:
         config = load_suite_config(config_path)
         if start_date:
@@ -330,5 +513,4 @@ def run_headless(
 
 
 def launch_ui() -> None:
-    app = RomulusUI()
-    app.run()
+    RomulusUI().run()

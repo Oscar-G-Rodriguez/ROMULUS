@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from romulus.backtest.engine import BacktestEngine
 from romulus.calendar.trading_days import get_trading_days
@@ -29,8 +30,8 @@ def _build_sample_data(tickers, start: str, end: str) -> pd.DataFrame:
 
     for i, _ in enumerate(index):
         for ticker in tickers:
-            data[(ticker, "Open")].iloc[i] = 100.0 + i
-            data[(ticker, "Close")].iloc[i] = 101.0 + i
+            data.loc[data.index[i], (ticker, "Open")] = 100.0 + i
+            data.loc[data.index[i], (ticker, "Close")] = 101.0 + i
 
     return data
 
@@ -77,3 +78,16 @@ def test_full_backtest_completes(tmp_path, monkeypatch) -> None:
     assert output_path.exists()
     assert (output_path / "orders.parquet").exists()
     assert result["metrics"]["final_value"] > 0
+
+    manifest = json.loads((output_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["runtime"]["python_version"].startswith("3.12.")
+    assert "uv_version" in manifest["runtime"]
+    assert manifest["runtime"]["xgboost_version"]
+    assert manifest["runtime"]["execution_devices"] == ["cpu"]
+
+    fills = pd.read_csv(output_path / "fills.csv")
+    holdings = pd.read_csv(output_path / "holdings.csv")
+    final_holdings = holdings.iloc[-1]
+    assert final_holdings["cash"] == pytest.approx(config.backtest.initial_cash + fills["cash_flow"].sum())
+    for ticker in tickers:
+        assert final_holdings[ticker] == pytest.approx(fills.loc[fills["ticker"] == ticker, "shares"].sum())
